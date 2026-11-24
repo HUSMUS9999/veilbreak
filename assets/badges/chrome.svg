@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="262" height="24" viewBox="0 0 262 24" role="img" aria-label="CHROME 158: 0 FALSE POSITIVES">
+  <defs>
+    <linearGradient id="iceBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0A1929"/>
+      <stop offset="100%" stop-color="#04202B"/>
+    </linearGradient>
+    <clipPath id="round">
+      <rect width="262" height="24" rx="5"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#round)">
+    <rect width="102" height="24" fill="#000000"/>
+    <rect x="102" width="160" height="24" fill="url(#iceBg)"/>
+    <rect x="102" width="1" height="24" fill="#22D3EE" fill-opacity="0.5"/>
+  </g>
+  <rect x="0.5" y="0.5" width="261" height="23" rx="4.5" fill="none" stroke="#22D3EE" stroke-opacity="0.6" stroke-width="1"/>
+  <g font-family="DejaVu Sans,Verdana,Geneva,sans-serif" font-size="9.8" font-weight="700" text-anchor="middle" letter-spacing="0.35">
+    <text x="51.0" y="15.3" fill="#94A3B8">CHROME 158</text>
+    <text x="182.0" y="15.3" fill="#CFFAFE">0 FALSE POSITIVES</text>
+  </g>
+</svg>

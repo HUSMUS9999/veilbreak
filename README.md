@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-  <a href="docs/getting-started-beginners.md"><img src="https://img.shields.io/badge/UX-Plain--English%20CLI%20(ask)-purple" alt="Plain-English CLI" /></a>
-  <a href="#live-verification-cloakbrowser-146-vs-chrome-158"><img src="https://img.shields.io/badge/CloakBrowser%20146-100%25%20Denied%20(11%2F11)-red" alt="CloakBrowser Denied" /></a>
-  <a href="#live-verification-cloakbrowser-146-vs-chrome-158"><img src="https://img.shields.io/badge/Chrome%20158-0%20False%20Positives-brightgreen" alt="Zero False Positives" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
+  <a href="docs/getting-started-beginners.md"><img src="assets/badges/nl-cli.svg" alt="CLI: Plain-English (ask)" /></a>
+  <a href="#live-verification-cloakbrowser-146-vs-chrome-158"><img src="assets/badges/cloakbrowser.svg" alt="CloakBrowser 146: 100% Denied (11/11)" /></a>
+  <a href="#live-verification-cloakbrowser-146-vs-chrome-158"><img src="assets/badges/chrome.svg" alt="Chrome 158: 0 False Positives" /></a>
+  <a href="LICENSE"><img src="assets/badges/license.svg" alt="License: MIT" /></a>
 </p>
 
 **Zero-dependency drop-in SDK, `<cloak-gate>` Web Component, server middleware, and plain-English CLI that detects and blocks CloakBrowser and C++-patched fingerprint-spoofing anti-detect browsers in 60 seconds.**
