@@ -1,0 +1,27 @@
+{
+  "name": "cloakgate",
+  "version": "1.0.0",
+  "description": "Zero-dependency CloakBrowser & anti-detect browser detection and blocking SDK, <cloak-gate> Web Component, middleware, and plain-English CLI",
+  "main": "src/index.js",
+  "bin": {
+    "cloakgate": "./bin/cloakgate.js"
+  },
+  "scripts": {
+    "test": "node --test test/cloakgate.test.js",
+    "demo": "node bin/cloakgate.js demo"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "cloakbrowser",
+    "anti-detect",
+    "bot-detection",
+    "web-components",
+    "browser-fingerprinting",
+    "security",
+    "anti-scraping",
+    "middleware"
+  ],
+  "license": "MIT"
+}
