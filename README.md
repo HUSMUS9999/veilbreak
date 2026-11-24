@@ -137,17 +137,13 @@ if verdict.blocked:
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    B["Browser / Automation Client"] -->|"1. GET /"| P["VeilBreak Reverse Proxy / Middleware"]
-    P -->|"2. Inject /__veilbreak/gate.js + <veil-break>"| B
-    B -->|"3. Stage 1: 14 Physics + Iframe + Worker Probes"| E["Client Integrity Engine"]
-    B -->|"4. Stage 2: Pointer Trajectory & Dwell Kinematics"| E
-    E -->|"5. GET /__veilbreak/ticket"| P
-    E -->|"6. Protected /api + X-VB-Ticket/Nonce/Attest (SHA-256)"| P
-    P -->|"Clean (score < threshold & 1-time ticket valid)"| U["Upstream App / API"]
-    P -->|"Anomaly / Replay / Tamper"| D["HTTP 403 VEILBREAK_DENIED"]
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/veilbreak-arch-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="assets/veilbreak-arch-light.svg" />
+    <img src="assets/veilbreak-arch-light.svg" alt="VeilBreak Dual-Stage Browser Integrity Gate Architecture" width="100%" />
+  </picture>
+</p>
 
 ---
 
