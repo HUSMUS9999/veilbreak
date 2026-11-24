@@ -3,7 +3,7 @@
 function compileNaturalLanguage(sentence) {
   const input = String(sentence || "").trim();
   if (!input) {
-    throw new Error('Describe what you want in plain English, e.g.:\n  cloakgate ask "block cloakbrowser on http://localhost:3000 on port 8080"');
+    throw new Error('Describe what you want in natural language, e.g.:\n  veilbreak ask "block stealth browsers on http://localhost:3000 on port 8080"');
   }
   const low = input.toLowerCase();
 
@@ -12,10 +12,10 @@ function compileNaturalLanguage(sentence) {
     return {
       input,
       intent: "snippet",
-      goal: `Print ready-to-paste HTML, <cloak-gate> Web Component, and Express integration snippets (${mode})`,
+      goal: `Print ready-to-paste HTML, <veil-break> Web Component, and Express integration snippets (${mode})`,
       options: { mode },
-      command: `cloakgate snippet --mode ${mode}`,
-      reasons: ["Gives beginners a 1-line copy-paste script tag and <cloak-gate> wrapper"],
+      command: `veilbreak snippet --mode ${mode}`,
+      reasons: ["Gives a 1-line copy-paste script tag, <veil-break> Shadow DOM wrapper, and server middleware"],
     };
   }
 
@@ -24,10 +24,10 @@ function compileNaturalLanguage(sentence) {
     return {
       input,
       intent: "demo",
-      goal: `Launch live CloakGate diagnostic playground & <cloak-gate> Web Component demo (${mode})`,
+      goal: `Launch live VeilBreak 14-invariant diagnostic playground & <veil-break> demo (${mode})`,
       options: { port: 8089, mode },
-      command: `cloakgate demo --port 8089 --mode ${mode}`,
-      reasons: ["Open in normal Chrome (0/11 CLEAN) vs CloakBrowser (11/11 DENIED) to see all 6 hardware invariants live"],
+      command: `veilbreak demo --port 8089 --mode ${mode}`,
+      reasons: ["Open in standard Chrome/Firefox vs any stealth or automation browser to inspect all 14 invariants + click kinematics live"],
     };
   }
 
@@ -40,13 +40,13 @@ function compileNaturalLanguage(sentence) {
   const reasons = [];
   if (/\b(monitor|watch|log only|without blocking|observe|audit)\b/.test(low)) {
     mode = "monitor";
-    reasons.push("--mode monitor: scores CloakBrowser visits via X-CloakGate-Score without blocking users");
-  } else if (/\b(brave|librewolf|privacy browser|balanced|gentle)\b/.test(low)) {
+    reasons.push("--mode monitor: scores browser visits via X-VeilBreak-Score without blocking users");
+  } else if (/\b(brave|librewolf|privacy browsers?|balanced|gentle)\b/.test(low)) {
     mode = "balanced";
-    reasons.push("--mode balanced (score >= 4): blocks CloakBrowser (11/11 or 8/11) while allowing Canvas-only privacy browsers like Brave");
+    reasons.push("--mode balanced (score >= 4): blocks multi-invariant stealth & automated browsers while allowing canvas-only privacy browsers");
   } else {
     mode = "strict";
-    reasons.push("--mode strict (score >= 2 + mandatory ticket-bound SHA-256 attest + headless UA denial): maximum CloakBrowser blocking");
+    reasons.push("--mode strict (score >= 2 + mandatory one-time ticket SHA-256 attest + automation UA denial): maximum stealth & automation blocking");
   }
 
   const pathMatches = [...input.matchAll(/(\/[a-z0-9_/-]+)/gi)]
@@ -54,14 +54,14 @@ function compileNaturalLanguage(sentence) {
     .filter((p) => !urlMatch || !urlMatch[0].endsWith(p))
     .filter((p) => p !== "/" && !p.startsWith("//"));
   const protectedPaths = pathMatches.length > 0 ? [...new Set(pathMatches)] : ["/api"];
-  reasons.push(`Auto-injects /__cloakgate/gate.js into HTML pages and verifies SHA-256 hardware attestation on ${protectedPaths.join(", ")}`);
+  reasons.push(`Auto-injects /__veilbreak/gate.js into HTML pages and verifies VB_ATTEST_V2 SHA-256 attestation on ${protectedPaths.join(", ")}`);
 
   return {
     input,
     intent: "protect",
-    goal: `Block CloakBrowser in front of ${target} on http://127.0.0.1:${listenPort} (${mode})`,
+    goal: `Protect ${target} against stealth & automated browsers on http://127.0.0.1:${listenPort} (${mode})`,
     options: { target, port: listenPort, mode, protectedPaths },
-    command: `cloakgate protect --target ${target} --port ${listenPort} --mode ${mode} --paths ${protectedPaths.join(",")}`,
+    command: `veilbreak protect --target ${target} --port ${listenPort} --mode ${mode} --paths ${protectedPaths.join(",")}`,
     reasons,
   };
 }

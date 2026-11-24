@@ -1,46 +1,48 @@
-# Beginner's Guide to CloakGate
+# VeilBreak — Natural-Language Beginner's Guide
 
-[← Back to README](../README.md) · [Hardware Invariants & Threat Model](./invariants-and-threat-model.md)
-
-CloakGate makes blocking **CloakBrowser** and fingerprint-spoofing anti-detect browsers simple — even if you have never written bot-defense code before.
+You do not need to memorize flags or security terminology to protect an app with VeilBreak. Describe what you want in natural language using `explain` (safe preview, zero side effects) or `ask` (run immediately).
 
 ---
 
-## Step 1: See All 6 Checks Live in Your Own Browser
+## Everyday Natural-Language Recipes
 
 ```bash
-node bin/cloakgate.js demo --port 8089
-```
+# 1. Preview safely first (dry-run — prints the exact command and why)
+npx veilbreak explain "block stealth browsers on http://localhost:3000 on port 8080"
 
-Open `http://127.0.0.1:8089/__cloakgate/playground`:
-- In **regular Chrome, Firefox, Edge, or Safari**, all 6 rows show **`CLEAN`** (`Score: 0 / 11`) and the `<cloak-gate>` Web Component renders normally.
-- In **CloakBrowser**, the hardware invariants light up red (`Score: 11 / 11`), `<cloak-gate>` wipes its protected content, and the protected page shows **`CLOAK_BROWSER_DENIED`**.
+# 2. Protect your app in strict mode (maximum protection across all engines)
+npx veilbreak ask "block stealth browsers on http://localhost:3000 on port 8080"
 
----
+# 3. Protect your app while keeping privacy browsers (Brave / LibreWolf) working
+npx veilbreak ask "protect http://localhost:3000 on port 8080 while keeping privacy browsers working"
 
-## Step 2: Use Plain English (`explain` & `ask`)
+# 4. Monitor & score traffic without blocking anyone (observe first)
+npx veilbreak ask "watch for anti-detect browsers without blocking on http://localhost:3000"
 
-```bash
-# Preview the exact command first without starting anything
-node bin/cloakgate.js explain "block cloakbrowser on http://localhost:3000 on port 8080"
+# 5. Print ready-to-paste HTML, <veil-break> Web Component, and Express snippets
+npx veilbreak ask "give me html and web component snippet"
 
-# Protect a website right now in strict mode
-node bin/cloakgate.js ask "block cloakbrowser on http://localhost:3000 on port 8080"
-
-# Keep Brave Shields Aggressive working while still blocking CloakBrowser
-node bin/cloakgate.js ask "block cloakbrowser on http://localhost:3000 while keeping brave working"
-
-# Roll out safely in monitor-only mode first
-node bin/cloakgate.js ask "watch for cloakbrowser without blocking on http://localhost:3000"
-
-# Print copy-paste HTML / <cloak-gate> / Express snippets
-node bin/cloakgate.js ask "give me html and web component snippets"
+# 6. Launch the interactive 14-invariant diagnostic playground
+npx veilbreak ask "show me a demo"
 ```
 
 ---
 
-## Step 3: Which Mode Should I Choose?
+## Testing Live in Your Own Browsers
 
-- Pick **`strict`** if you protect paid content, Web Components, login/signup flows, or anti-scraping APIs and want maximum CloakBrowser + headless browser blocking.
-- Pick **`balanced`** if your site has users on privacy browsers that inject Canvas-only farbling (such as Brave Shields set to Aggressive) — CloakBrowser still triggers `8/11` to `11/11` and gets blocked (`>= 4`), while Canvas-only farbling (`2/11`) passes cleanly.
-- Pick **`monitor`** for your first 24 hours in production to observe `X-CloakGate-Score` telemetry before enabling blocking.
+1. Start the interactive diagnostic playground:
+   ```bash
+   node bin/veilbreak.js demo --port 8089 --mode strict
+   ```
+2. Open `http://127.0.0.1:8089/__veilbreak/playground` in **standard Google Chrome** or **Mozilla Firefox** — all 14 invariants report `CLEAN` (`score = 0`), `<veil-break>` mounts cleanly, and clicking **Verify Protected Action** returns `HTTP 200`.
+3. Open the exact same URL from any automated or stealth browser (Playwright, Puppeteer-Stealth, Patchright, Rebrowser, CloakBrowser, Camoufox, SeleniumBase UC, or Nodriver) to watch the specific invariants trigger in real time.
+
+---
+
+## Reproducing the 19-Browser Live Benchmark
+
+```bash
+python3 benchmarks/run_live_benchmark.py
+```
+
+The runner starts a live local VeilBreak server (`benchmarks/bench_server.js`), tests clean desktop controls (Chrome + Firefox with real OS mouse movement via `xdotool`) alongside all installed stealth & automation frameworks, and writes machine-readable output to `benchmarks/results.json`.

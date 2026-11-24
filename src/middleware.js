@@ -27,9 +27,9 @@ function isProtectedPath(pathname, protectedPaths) {
   return false;
 }
 
-function createCloakGateMiddleware(options = {}) {
+function createVeilBreakMiddleware(options = {}) {
   const mode = normalizeMode(options.mode ?? "strict");
-  const basePath = options.basePath || "/__cloakgate";
+  const basePath = options.basePath || "/__veilbreak";
   const protectedPaths = Array.isArray(options.protectedPaths) && options.protectedPaths.length > 0
     ? options.protectedPaths
     : ["/api"];
@@ -97,16 +97,16 @@ function createCloakGateMiddleware(options = {}) {
     }
 
     if (req.method === "GET" && pathname === `${basePath}/health`) {
-      sendJson(res, 200, { ok: true, mode });
+      sendJson(res, 200, { ok: true, mode, version: "2.0.0" });
       return true;
     }
 
     if (!isProtectedPath(pathname, protectedPaths)) {
-      // Still block blatant HeadlessChrome/OS-lie on page load in strict mode if requested
       if (mode === "strict") {
         const ua = String(req.headers["user-agent"] || "");
-        if (/HeadlessChrome|Playwright|Puppeteer|PhantomJS/i.test(ua)) {
-          sendJson(res, 403, { ok: false, error: "CLOAK_BROWSER_DENIED", reasons: ["AUTOMATION_UA_DENIED"] });
+        const ch = String(req.headers["sec-ch-ua"] || "");
+        if (/HeadlessChrome|Playwright|Puppeteer|PhantomJS/i.test(ua) || /HeadlessChrome/i.test(ch)) {
+          sendJson(res, 403, { ok: false, error: "VEILBREAK_DENIED", reasons: ["AUTOMATION_UA_DENIED"] });
           return true;
         }
       }
@@ -114,11 +114,11 @@ function createCloakGateMiddleware(options = {}) {
       return false;
     }
 
-    const ticket = String(req.headers["x-cg-ticket"] || "");
-    const nonce = String(req.headers["x-cg-nonce"] || "");
+    const ticket = String(req.headers["x-vb-ticket"] || "");
+    const nonce = String(req.headers["x-vb-nonce"] || "");
     let attest = null;
     try {
-      const rawAtt = req.headers["x-cg-attest"];
+      const rawAtt = req.headers["x-vb-attest"];
       if (typeof rawAtt === "string" && rawAtt.trim()) attest = JSON.parse(rawAtt);
     } catch {
       attest = { invalid: true };
@@ -132,9 +132,9 @@ function createCloakGateMiddleware(options = {}) {
       verdict.reasons.push("TICKET_REPLAYED_OR_INVALID");
     }
 
-    req.cloakGate = verdict;
-    res.setHeader("X-CloakGate-Score", String(verdict.score));
-    res.setHeader("X-CloakGate-Mode", verdict.mode);
+    req.veilBreak = verdict;
+    res.setHeader("X-VeilBreak-Score", String(verdict.score));
+    res.setHeader("X-VeilBreak-Mode", verdict.mode);
 
     if ((verdict.blocked || verdict.score > 0) && onDetect) {
       try { onDetect({ ...verdict, path: pathname, method: req.method }); } catch {}
@@ -143,7 +143,7 @@ function createCloakGateMiddleware(options = {}) {
     if (verdict.blocked) {
       sendJson(res, 403, {
         ok: false,
-        error: "CLOAK_BROWSER_DENIED",
+        error: "VEILBREAK_DENIED",
         score: verdict.score,
         threshold: verdict.threshold,
         reasons: verdict.reasons,
@@ -159,12 +159,12 @@ function createCloakGateMiddleware(options = {}) {
   return handle;
 }
 
-function createCloakGateServer(options = {}) {
+function createVeilBreakServer(options = {}) {
   const targetUrl = new URL(options.target || "http://127.0.0.1:3000");
-  const basePath = options.basePath || "/__cloakgate";
+  const basePath = options.basePath || "/__veilbreak";
   const mode = normalizeMode(options.mode ?? "strict");
   const injectGate = options.injectGate !== false;
-  const middleware = createCloakGateMiddleware({ ...options, basePath, mode });
+  const middleware = createVeilBreakMiddleware({ ...options, basePath, mode });
   const clientMod = targetUrl.protocol === "https:" ? https : http;
 
   const server = http.createServer(async (req, res) => {
@@ -191,7 +191,8 @@ function createCloakGateServer(options = {}) {
           upRes.on("data", (c) => chunks.push(c));
           upRes.on("end", () => {
             let html = Buffer.concat(chunks).toString("utf8");
-            const tag = `<script src="${basePath}/gate.js" data-mode="${mode}" data-block-page="true"></script>`;
+            const blockAttr = options.autoBlockPage === false ? "false" : "true";
+            const tag = `<script src="${basePath}/gate.js" data-mode="${mode}" data-block-page="${blockAttr}"></script>`;
             if (!html.includes(`${basePath}/gate.js`)) {
               html = html.includes("</head>")
                 ? html.replace("</head>", `${tag}</head>`)
@@ -232,4 +233,4 @@ function createCloakGateServer(options = {}) {
   };
 }
 
-module.exports = { createCloakGateMiddleware, createCloakGateServer };
+module.exports = { createVeilBreakMiddleware, createVeilBreakServer };

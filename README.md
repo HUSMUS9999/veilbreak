@@ -1,147 +1,186 @@
 <p align="center">
-  <img src="assets/cloakgate-logo.png" alt="CloakGate — Anti-Detect & CloakBrowser Defense" width="100%" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/veilbreak-hero-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="assets/veilbreak-hero-light.svg" />
+    <img src="assets/veilbreak-hero-light.svg" alt="VeilBreak — Universal Anti-Stealth &amp; Browser Integrity Gate" width="400" />
+  </picture>
+</p>
+
+<h1 align="center">VeilBreak</h1>
+
+<p align="center">
+  Universal Anti-Stealth &amp; Multi-Engine Browser Integrity Gate
 </p>
 
 <p align="center">
-  <a href="docs/getting-started-beginners.md"><img src="assets/badges/nl-cli.svg" alt="CLI: Plain-English (ask)" /></a>
-  <a href="#live-verification-cloakbrowser-146-vs-chrome-158"><img src="assets/badges/cloakbrowser.svg" alt="CloakBrowser 146: 100% Denied (11/11)" /></a>
-  <a href="#live-verification-cloakbrowser-146-vs-chrome-158"><img src="assets/badges/chrome.svg" alt="Chrome 158: 0 False Positives" /></a>
-  <a href="LICENSE"><img src="assets/badges/license.svg" alt="License: MIT" /></a>
+  <a href="#live-19-browser-benchmark"><img src="assets/badges/version.svg" alt="version: 2.0.0" /></a>
+  <a href="docs/invariants-and-threat-model.md"><img src="assets/badges/invariants.svg" alt="invariants: 14 + kinematics" /></a>
+  <a href="#live-19-browser-benchmark"><img src="assets/badges/engines.svg" alt="engines: Chromium + Gecko" /></a>
+  <a href="#quickstart"><img src="assets/badges/deps.svg" alt="deps: 0" /></a>
+  <a href="LICENSE"><img src="assets/badges/license.svg" alt="license: MIT" /></a>
 </p>
 
-**Zero-dependency drop-in SDK, `<cloak-gate>` Web Component, server middleware, and plain-English CLI that detects and blocks CloakBrowser and C++-patched fingerprint-spoofing anti-detect browsers in 60 seconds.**
+**VeilBreak** is a zero-dependency browser integrity SDK, `<veil-break>` Shadow DOM Web Component, reverse-proxy middleware, and Python verifier that detects and blocks **automated, CDP-patched, JS-spoofed, and C++-patched anti-detect browsers across both Chromium and Gecko engines** — using 14 hardware, graphics, cross-realm, and geometric physics invariants plus biomechanical click kinematics, with **0% false positives on clean desktop Chrome and Firefox**.
+
+## Features
+
+- **14 Cross-Engine Physics Invariants** — Detects Canvas2D / OffscreenCanvas noise & non-determinism, WebGL clear-color & GPU hardware lies, silent OfflineAudioContext noise, integer-DPR DOMRect poisoning, OS core font lies, Euclidean viewport/screen impossibilities, and Chromium/Gecko engine contradictions
+- **Cross-Realm & Web Worker Verification** — Uses an isolated fresh `iframe` realm and a dedicated `Web Worker` (`OffscreenCanvas` + `self.navigator`) to expose main-thread JS stealth wrappers and spoofed native getters
+- **Stage-2 Biomechanical Click Kinematics** — Catches untrusted synthetic DOM clicks (`isTrusted === false`) and programmatic CDP/Juggler teleport clicks (`<= 3` pointer moves, `< 12 ms` dwell, dead-center hit) while explicitly exempting trusted keyboard accessibility (`Enter`/`Space`)
+- **Cryptographic One-Time Attestation (`VB_ATTEST_V2`)** — Binds browser probe results to single-use server tickets and client nonces via SHA-256, blocking `curl`, replay attacks, and header/OS contradictions
+- **Drop-In `<veil-break>` Shadow DOM Component & Zero-Dep Middleware** — Protect an individual UI widget with a closed Shadow DOM gate, drop in Express/Node.js middleware, verify in Python (FastAPI/Django/Flask), or launch a zero-config reverse proxy via natural-language CLI (`ask` / `explain`)
 
 ---
 
-## Why CloakGate Exists
+## Live 19-Browser Benchmark
 
-Anti-detect browsers like **CloakBrowser** patch Chromium in C++ to strip `navigator.webdriver`, hide CDP/Playwright automation flags, and spoof Windows/NVIDIA GPU profiles on Linux servers — bypassing almost every classic bot script.
+Every row below was measured live against a real running VeilBreak v2.0.0 server (`mode=strict`, `benchmarks/run_live_benchmark.py`, saved in [`benchmarks/results.json`](benchmarks/results.json)). Clean desktop controls were tested with genuine browser profiles and multi-step OS mouse trajectories (`87–88 ms` human dwell) via `xdotool`.
 
-**CloakGate catches CloakBrowser through 6 physical/hardware invariants** that synthetic fingerprint-noise injectors inevitably violate while real desktop browsers (Chrome, Firefox, Edge, Safari) never do:
+- **Genuine Human Control Browsers:** **`2 / 2` ALLOWED (`0.0%` false positives)**
+- **Stage-1 Passive Detection (zero interaction, `< 20 ms` median):** **`15 / 17` BLOCKED (`88.2%`)**
+- **Stage-1 + Stage-2 Combined (with interaction kinematics):** **`17 / 17` BLOCKED (`100.0%`)**
 
-1. **2D Canvas Solid `#808080` Flat Fill** — real GPUs/CPUs render 1 exact uniform RGB; CloakBrowser injects synthetic pixel noise (`5` unique RGBs, `+2`).
-2. **WebGL `gl.clear(0.5, 0.5, 0.5, 1)` `readPixels`** — real WebGL returns 1 uniform RGB; CloakBrowser injects synthetic readback noise (`5` unique RGBs, `+2`).
-3. **Silent `OfflineAudioContext` (0.0 Input Buffer)** — silence must stay `0.0`; CloakBrowser injects noise into `512/512` samples (`+2`).
-4. **Integer-DPR `getBoundingClientRect()`** — a fixed `left:10px; top:20px; width:100px; height:50px` box at integer DPR must measure `[10, 20]`; CloakBrowser poisons it to `[9.953125, 19.984375]` (`+2`).
-5. **OS Platform vs. Core System Fonts** — claiming `Win32`/`Windows` with `0/4` mandatory Windows fonts (`Segoe UI`, `Tahoma`, `Consolas`, `Calibri`) or `MacIntel`/`macOS` with `0/3` macOS fonts (`+2`).
-6. **D3D11 NVIDIA/RTX WebGL Extension Parity** — spoofing a D3D11 NVIDIA/RTX renderer string while missing `KHR_parallel_shader_compile` (`< 30` extensions, `+1`).
-
-Unmodified **Google Chrome 158** scores **`0 / 11`**. **CloakBrowser 146** scores **`11 / 11`** (and still scores **`8 / 11`** even with `--fingerprint-platform=linux`!).
+| Browser / Framework | Category | Stage-1 Passive | `<veil-break>` WC | Stage-2 Click | Live Triggered Invariants |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **Google Chrome 158 (Clean Desktop)** | Genuine Control | **ALLOW (`0`)** | `allowed` | **ALLOW (`+0`)** | `CLEAN` (real human click: 13 moves, 87.7 ms dwell) |
+| **Mozilla Firefox 153 ESR (Clean Desktop)** | Genuine Control | **ALLOW (`0`)** | `allowed` | **ALLOW (`+0`)** | `CLEAN` (real human click: 17 moves, 88.0 ms dwell) |
+| **`curl` / Python `urllib`** | Tier 1: HTTP Scraper | **BLOCK (`6`)** | `n/a` | `n/a` | `ATTEST_REQUIRED`, `TICKET_REPLAYED_OR_INVALID` |
+| **Playwright Chromium (Headless)** | Tier 2: Automation | **BLOCK (`6`)** | `403` | `n/a` | `AUTOMATION_UA_DENIED` (HTTP 403 before JS load) |
+| **Playwright Chromium (Headed)** | Tier 2: Automation | **BLOCK (`6`)** | `blocked` | **BLOCK (`+4`)** | `WEBDRIVER_FLAG`, `VIEWPORT_GEOMETRY_IMPOSSIBILITY`, `TELEPORT_CLICK_PHYSICS` |
+| **Playwright Firefox 151 (Headless)** | Tier 2: Automation | **BLOCK (`8`)** | `blocked` | **BLOCK (`+4`)** | `WEBDRIVER_FLAG`, `ENGINE_COHERENCE_LIE`, `VIEWPORT_GEOMETRY_IMPOSSIBILITY`, `TELEPORT_CLICK_PHYSICS` |
+| **Playwright Firefox 151 (Headed)** | Tier 2: Automation | **BLOCK (`8`)** | `blocked` | **BLOCK (`+4`)** | `WEBDRIVER_FLAG`, `ENGINE_COHERENCE_LIE`, `VIEWPORT_GEOMETRY_IMPOSSIBILITY`, `TELEPORT_CLICK_PHYSICS` |
+| **Playwright + `playwright-stealth`** | Tier 3: JS Stealth | **BLOCK (`6`)** | `403` | `n/a` | `AUTOMATION_UA_DENIED` *(in-browser also triggers `WEBDRIVER_GETTER_SPOOFED`, `NATIVE_FUNCTION_TAMPERED`, `OS_CORE_FONT_LIE`)* |
+| **Puppeteer + `puppeteer-extra-plugin-stealth`** | Tier 3: JS Stealth | **BLOCK (`12`)** | `blocked` | **BLOCK (`+4`)** | `WORKER_REALM_CONTRADICTION`, `WEBGL_HARDWARE_COHERENCE_LIE`, `OS_CORE_FONT_LIE`, `ENGINE_COHERENCE_LIE`, `VIEWPORT_GEOMETRY_IMPOSSIBILITY`, `TELEPORT_CLICK_PHYSICS` |
+| **CloakBrowser 146 (Headless)** | Tier 4a: C++ Chromium | **BLOCK (`12`)** | `blocked` | **BLOCK (`+4`)** | `CANVAS2D_SYNTHETIC_NOISE`, `WEBGL_CLEAR_SYNTHETIC_NOISE`, `WEBGL_HARDWARE_COHERENCE_LIE`, `SILENT_AUDIO_SYNTHETIC_NOISE`, `DOMRECT_SUBPIXEL_POISONING`, `OS_CORE_FONT_LIE`, `TELEPORT_CLICK_PHYSICS` |
+| **CloakBrowser 146 (Headed)** | Tier 4a: C++ Chromium | **BLOCK (`10`)** | `blocked` | **BLOCK (`+4`)** | `CANVAS2D_SYNTHETIC_NOISE`, `WEBGL_CLEAR_SYNTHETIC_NOISE`, `SILENT_AUDIO_SYNTHETIC_NOISE`, `DOMRECT_SUBPIXEL_POISONING`, `OS_CORE_FONT_LIE`, `TELEPORT_CLICK_PHYSICS` |
+| **Camoufox 158 (Headless)** | Tier 4a: C++ Firefox | **BLOCK (`4`)** | `blocked` | **BLOCK (`+4`)** | `CANVAS2D_NON_DETERMINISTIC`, `TELEPORT_CLICK_PHYSICS` |
+| **Camoufox 158 (Headed)** | Tier 4a: C++ Firefox | **ALLOW (`0`)*** | `allowed`* | **BLOCK (`+4`)** | `TELEPORT_CLICK_PHYSICS` *(\*when rolling a matching-OS zero-noise profile; cross-OS / noise profiles score `8+` at Stage 1 via `CANVAS2D_NON_DETERMINISTIC` + `WEBGL_HARDWARE_COHERENCE_LIE`)* |
+| **Patchright (Headless)** | Tier 4b: CDP-Patched | **BLOCK (`6`)** | `403` | `n/a` | `AUTOMATION_UA_DENIED` (HTTP 403 before JS load) |
+| **Patchright (Headed)** | Tier 4b: CDP-Patched | **BLOCK (`2`)** | `blocked` | **BLOCK (`+4`)** | `VIEWPORT_GEOMETRY_IMPOSSIBILITY`, `TELEPORT_CLICK_PHYSICS` |
+| **Rebrowser-Playwright (Headless)** | Tier 4b: CDP-Patched | **BLOCK (`6`)** | `403` | `n/a` | `AUTOMATION_UA_DENIED` (HTTP 403 before JS load) |
+| **Rebrowser-Playwright (Headed)** | Tier 4b: CDP-Patched | **BLOCK (`2`)** | `blocked` | **BLOCK (`+4`)** | `VIEWPORT_GEOMETRY_IMPOSSIBILITY`, `TELEPORT_CLICK_PHYSICS` |
+| **SeleniumBase UC Mode (Headed)** | Tier 4b: CDP-Patched | **BLOCK (`6`)** | `blocked` | **BLOCK (`+6`)** | `AUTOMATION_GLOBAL_ARTIFACT`, `VIEWPORT_GEOMETRY_IMPOSSIBILITY`, `UNTRUSTED_SYNTHETIC_CLICK` |
+| **Nodriver (Headed)** | Tier 4b: Raw-CDP | **ALLOW (`0`)** | `allowed` | **BLOCK (`+6`)** | `UNTRUSTED_SYNTHETIC_CLICK` *(clean native Chrome window on passive load; caught immediately on interaction)* |
 
 ---
 
-## Easiest Way to Start: Plain English (`ask` & `explain`)
+## Quickstart
 
-No security expertise needed — describe what you want in plain English:
+### 1. Clone & Run Live Diagnostic Playground (Zero Dependencies, Node >= 20)
 
 ```bash
-# Preview the exact command first (dry-run)
-node bin/cloakgate.js explain "block cloakbrowser on http://localhost:3000 on port 8080"
-
-# Block CloakBrowser strictly in front of your existing app (zero code changes!)
-node bin/cloakgate.js ask "block cloakbrowser on http://localhost:3000 on port 8080"
-
-# Block CloakBrowser while keeping privacy browsers like Brave working (balanced mode)
-node bin/cloakgate.js ask "block cloakbrowser on http://localhost:3000 while keeping brave working"
-
-# Print ready-to-paste HTML, <cloak-gate>, and Express snippets
-node bin/cloakgate.js ask "give me html and web component snippets"
-
-# Launch the live 6-invariant diagnostic playground right now
-node bin/cloakgate.js ask "open the live playground demo"
+git clone https://github.com/HUSMUS9999/veilbreak.git
+cd veilbreak
+node bin/veilbreak.js demo --port 8089 --mode strict
+# Open http://127.0.0.1:8089/__veilbreak/playground
 ```
 
-Read the **[Beginner's Guide](docs/getting-started-beginners.md)** for full step-by-step recipes.
+### 2. Natural-Language CLI (`explain` & `ask`)
 
----
+```bash
+# Safe dry-run preview first
+node bin/veilbreak.js explain "block stealth browsers on http://localhost:3000 on port 8080"
 
-## 4 Ways to Integrate (Pick One)
+# Protect any upstream web app via reverse proxy
+node bin/veilbreak.js ask "block stealth browsers on http://localhost:3000 on port 8080"
 
-### 1. One-Line HTML Drop-In or `<cloak-gate>` Web Component
+# Balanced mode (blocks multi-invariant stealth browsers while allowing Canvas-only privacy browsers)
+node bin/veilbreak.js ask "protect http://localhost:3000 on port 8080 while keeping privacy browsers working"
+```
+
+### 3. Drop-In HTML & `<veil-break>` Web Component
 
 ```html
-<!-- Option A: Block CloakBrowser across the entire page -->
-<script src="/__cloakgate/gate.js" data-mode="strict" data-block-page="true"></script>
+<!-- Full-page automatic protection -->
+<script src="/__veilbreak/gate.js" data-mode="strict" data-block-page="true"></script>
 
-<!-- Option B: Wrap any specific Web Component, checkout, or pricing widget -->
-<script src="/__cloakgate/gate.js" data-mode="strict" data-block-page="false"></script>
-<cloak-gate mode="strict">
-  <my-protected-widget></my-protected-widget>
-</cloak-gate>
+<!-- Or wrap specific sensitive UI widgets in a closed Shadow DOM gate -->
+<script src="/__veilbreak/gate.js" data-mode="strict" data-block-page="false"></script>
+<veil-break mode="strict">
+  <my-pricing-widget></my-pricing-widget>
+</veil-break>
 ```
 
-### 2. Zero-Dependency Express / Node.js Middleware
+### 4. Node.js / Express Middleware & Python Verifier
 
 ```js
-const express = require("express");
-const { createCloakGateMiddleware } = require("cloakgate");
+const { createVeilBreakMiddleware } = require("./src/index.js");
 
-const app = express();
-app.use(
-  createCloakGateMiddleware({
-    mode: "strict", // "off" | "monitor" | "balanced" | "strict"
-    protectedPaths: ["/api"],
-    onDetect: (ev) => console.warn("[CloakGate]", ev.blocked ? "BLOCKED" : "FLAG", ev.reasons),
-  })
-);
+app.use(createVeilBreakMiddleware({
+  mode: "strict",             // "strict" (>=2) | "balanced" (>=4) | "monitor" | "off"
+  protectedPaths: ["/api"],
+  onDetect: (ev) => console.log(ev.blocked, ev.score, ev.reasons),
+}));
 ```
-
-### 3. Standalone Zero-Code Reverse Proxy (Works With React, Next.js, Django, Go, Rails, PHP)
-
-```bash
-node bin/cloakgate.js protect --target http://127.0.0.1:3000 --port 8080 --mode strict --paths /api
-```
-
-### 4. Python Stdlib Verifier (`python/cloakgate.py`)
 
 ```python
-from cloakgate import verify_cloak_attestation
+from python.veilbreak import verify_attestation
 
-verdict = verify_cloak_attestation(
+verdict = verify_attestation(
     mode="strict",
     headers=dict(request.headers),
-    attest=request.headers.get("X-CG-Attest"),
-    ticket=request.headers.get("X-CG-Ticket", ""),
-    nonce=request.headers.get("X-CG-Nonce", ""),
+    attest=request.headers.get("x-vb-attest"),
+    ticket=request.headers.get("x-vb-ticket", ""),
+    nonce=request.headers.get("x-vb-nonce", ""),
 )
 if verdict.blocked:
-    return 403, {"error": "CLOAK_BROWSER_DENIED", "reasons": verdict.reasons}
+    raise HTTPException(status_code=403, detail=verdict.reasons)
 ```
 
 ---
 
-## Live Verification: CloakBrowser 146 vs. Chrome 158
+## Architecture
 
-Empirically tested live against `cloakgate demo --mode strict` and `--mode balanced`:
-
-| Check | Live CloakBrowser 146 (`chromium-146.0.7680.177.5`) | Live Google Chrome 158 |
-| :--- | :--- | :--- |
-| **Live 6-Invariant Score (`/__cloakgate/playground`)** | **`11 / 11` — DENIED (`CLOAK_BROWSER_DENIED`)** | **`0 / 11` — ALLOWED (`CLEAN`)** |
-| **Protected Page Auto-Block (`data-block-page="true"`)** | **Page wiped & blocked (`CLOAK_BROWSER_DENIED`)** | **Full page content rendered (`0` false positives)** |
-| **`<cloak-gate>` Shadow DOM Web Component** | **Child wiped & blocked (`dataset.cloakgateStatus="blocked"`)** | **Child rendered cleanly (`dataset.cloakgateStatus="allowed"`)** |
-| **Protected `/api/secret` Endpoint** | **`403 CLOAK_BROWSER_DENIED`** | **`200 OK`** |
-
----
-
-## Choosing `balanced` vs. `strict`
-
-| Mode | Score Threshold | Server Attestation | Brave Aggressive Farbling (`+2`) | CloakBrowser 146 (`11/11` or `8/11`) |
-| :--- | :---: | :---: | :---: | :---: |
-| **`monitor`** | Log only | Optional | Allowed | Logged only |
-| **`balanced`** | `>= 4` | Checked if sent | **Allowed** | **100% Blocked** |
-| **`strict`** *(default)* | `>= 2` | **Mandatory single-use ticket + SHA-256 attest + Headless UA block** | Flagged (`2 >= 2`) | **100% Blocked** |
-
-Read **[Hardware Invariants & Honest Threat Model](docs/invariants-and-threat-model.md)** for full probe details and honest limitations.
+```mermaid
+flowchart LR
+    B["Browser / Automation Client"] -->|"1. GET /"| P["VeilBreak Reverse Proxy / Middleware"]
+    P -->|"2. Inject /__veilbreak/gate.js + <veil-break>"| B
+    B -->|"3. Stage 1: 14 Physics + Iframe + Worker Probes"| E["Client Integrity Engine"]
+    B -->|"4. Stage 2: Pointer Trajectory & Dwell Kinematics"| E
+    E -->|"5. GET /__veilbreak/ticket"| P
+    E -->|"6. Protected /api + X-VB-Ticket/Nonce/Attest (SHA-256)"| P
+    P -->|"Clean (score < threshold & 1-time ticket valid)"| U["Upstream App / API"]
+    P -->|"Anomaly / Replay / Tamper"| D["HTTP 403 VEILBREAK_DENIED"]
+```
 
 ---
 
-## Run Tests
+## Modes & Honest Boundaries
+
+| Mode | Threshold | Behavior | Best For |
+| :--- | :-: | :--- | :--- |
+| `strict` | `>= 2` | Blocks on any triggered physics/geometry/coherence invariant, automation UA, or invalid/replayed ticket | Protected APIs, anti-scraping, high-value web assets |
+| `balanced` | `>= 4` | Requires multiple corroborating anomalies or high-confidence automation/cross-realm proof; allows Canvas-only privacy browsers (Brave/LibreWolf) | Public consumer sites needing privacy-browser headroom |
+| `monitor` | `∞` | Never blocks; emits `X-VeilBreak-Score` and `onDetect` telemetry | Staging, shadow auditing, rollout verification |
+
+**Honest boundary:** An unmodified, headed desktop browser running natively on its true OS with zero viewport override, zero graphics/audio noise, and human-speed OS-level pointer movement sits at the irreducible boundary of client-side browser detection. VeilBreak is designed as a high-precision, zero-dependency layer alongside authentication, rate limiting, and server-side policy enforcement.
+
+---
+
+## Testing & Reproducing Benchmarks
 
 ```bash
+# Run zero-dependency Node.js + Python parity unit & integration test suite
 npm test
+
+# Reproduce the live 19-browser empirical benchmark (writes benchmarks/results.json)
+python3 benchmarks/run_live_benchmark.py
 ```
 
-## Related Projects
+---
 
-- **[Vibe-Slayer](https://github.com/HUSMUS9999/vibe-slayer)** — Zero-dependency Rust + C99 asset, binary, Web Component, and zero-geometry 3D stream protection platform.
-- **[ProxySnare](https://github.com/HUSMUS9999/proxysnare)** — Detect and block Caido Repeater, Burp Suite Repeater, and intercepting HTTP proxies.
+## Documentation & Ecosystem
+
+- **[14 Physics Invariants, Kinematics & Threat Model](docs/invariants-and-threat-model.md)** — Complete specification of every invariant, scoring weight, `VB_ATTEST_V2` wire format, and threat boundaries.
+- **[Natural-Language Beginner's Guide](docs/getting-started-beginners.md)** — Copy-paste `ask`/`explain` recipes and live playground walkthrough.
+- **[Live Benchmark Raw Results](benchmarks/results.json)** — Machine-readable JSON output from the 19-browser test run.
+
+Companion repositories:
+- **[Vibe-Slayer](https://github.com/HUSMUS9999/vibe-slayer)** — Zero-dependency Rust + C99 asset, binary, website/Web Component, AI weight, and zero-geometry 3D stream protection platform.
+- **[ProxySnare](https://github.com/HUSMUS9999/proxysnare)** — Standalone middleware & CLI shield that detects and blocks intercepting HTTP proxies and automated repeaters.
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE).

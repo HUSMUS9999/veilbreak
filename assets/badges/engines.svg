@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="182" height="20" viewBox="0 0 182 20" role="img" aria-label="engines: Chromium + Gecko">
+  <linearGradient id="s" x2="0" y2="100%">
+    <stop offset="0" stop-color="#bbb" stop-opacity=".12"/>
+    <stop offset="1" stop-opacity=".14"/>
+  </linearGradient>
+  <clipPath id="r">
+    <rect width="182" height="20" rx="3" fill="#fff"/>
+  </clipPath>
+  <g clip-path="url(#r)">
+    <rect width="54" height="20" fill="#4B5563"/>
+    <rect x="54" width="128" height="20" fill="#4F46E5"/>
+    <rect width="182" height="20" fill="url(#s)"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="10.6">
+    <text aria-hidden="true" x="27.0" y="14.6" fill="#010101" fill-opacity=".3">engines</text>
+    <text x="27.0" y="13.7">engines</text>
+    <text aria-hidden="true" x="118.0" y="14.6" fill="#010101" fill-opacity=".3" font-weight="600">Chromium + Gecko</text>
+    <text x="118.0" y="13.7" font-weight="600">Chromium + Gecko</text>
+  </g>
+</svg>

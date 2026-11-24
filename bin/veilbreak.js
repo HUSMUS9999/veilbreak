@@ -2,38 +2,38 @@
 "use strict";
 
 const http = require("node:http");
-const { createCloakGateServer, compileNaturalLanguage } = require("../src/index.js");
+const { createVeilBreakServer, compileNaturalLanguage } = require("../src/index.js");
 
 function printHelp() {
-  console.log(`CloakGate v1.0.0 — Detect & Block CloakBrowser and Anti-Detect Browsers
+  console.log(`VeilBreak v2.0.0 — Universal Anti-Stealth & Browser Integrity Gate
 
-Beginner Natural-Language Mode (Plain English):
-  cloakgate ask "block cloakbrowser on http://localhost:3000 on port 8080"
-  cloakgate ask "block cloakbrowser on http://localhost:3000 while keeping brave working"
-  cloakgate explain "watch for cloakbrowser without blocking on http://localhost:3000"
+Natural-Language Mode:
+  veilbreak ask "block stealth browsers on http://localhost:3000 on port 8080"
+  veilbreak ask "protect http://localhost:3000 while keeping privacy browsers working"
+  veilbreak explain "watch for anti-detect browsers without blocking on http://localhost:3000"
 
 Commands:
-  cloakgate protect --target <url> [--port 8080] [--mode strict|balanced|monitor] [--paths /api]
-  cloakgate demo [--port 8089] [--mode strict|balanced]
-  cloakgate snippet [--mode strict|balanced]
-  cloakgate ask "<plain English>" [--dry-run] [--json]
-  cloakgate explain "<plain English>" [--json]
+  veilbreak protect --target <url> [--port 8080] [--mode strict|balanced|monitor] [--paths /api]
+  veilbreak demo [--port 8089] [--mode strict|balanced]
+  veilbreak snippet [--mode strict|balanced]
+  veilbreak ask "<natural language>" [--dry-run] [--json]
+  veilbreak explain "<natural language>" [--json]
 `);
 }
 
 function printSnippets(mode = "strict") {
-  console.log(`<!-- 1. One-line HTML drop-in (blocks CloakBrowser across the entire page) -->
-<script src="/__cloakgate/gate.js" data-mode="${mode}" data-block-page="true"></script>
+  console.log(`<!-- 1. One-line HTML drop-in (blocks stealth & automated browsers across the page) -->
+<script src="/__veilbreak/gate.js" data-mode="${mode}" data-block-page="true"></script>
 
-<!-- 2. Protect any specific Web Component / section with <cloak-gate> -->
-<script src="/__cloakgate/gate.js" data-mode="${mode}" data-block-page="false"></script>
-<cloak-gate mode="${mode}">
+<!-- 2. Protect any specific Web Component / section with <veil-break> -->
+<script src="/__veilbreak/gate.js" data-mode="${mode}" data-block-page="false"></script>
+<veil-break mode="${mode}">
   <my-pricing-widget></my-pricing-widget>
-</cloak-gate>
+</veil-break>
 
 // 3. Express / Node.js server middleware (zero dependencies)
-const { createCloakGateMiddleware } = require("cloakgate");
-app.use(createCloakGateMiddleware({ mode: "${mode}", protectedPaths: ["/api"] }));
+const { createVeilBreakMiddleware } = require("veilbreak");
+app.use(createVeilBreakMiddleware({ mode: "${mode}", protectedPaths: ["/api"] }));
 `);
 }
 
@@ -60,12 +60,12 @@ async function runDemo(port = 8089, mode = "strict") {
       res.end(payload);
       return;
     }
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>CloakGate Protected App</title></head>
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>VeilBreak Protected App</title></head>
 <body style="background:#0b0f19;color:#e2e8f0;font-family:system-ui;padding:32px;">
-  <h1>CloakGate Protected Page (${mode})</h1>
+  <h1>VeilBreak Protected Page (${mode})</h1>
   <p id="page-secret">REAL_BROWSER_CONTENT_MOUNTED</p>
-  <cloak-gate id="wc-demo" mode="${mode}"><div id="wc-inner">WC_SECRET_VISIBLE</div></cloak-gate>
-  <p><a href="/__cloakgate/playground" style="color:#38bdf8;">Open Live 6-Invariant Diagnostic Playground →</a></p>
+  <veil-break id="wc-demo" mode="${mode}"><div id="wc-inner">WC_SECRET_VISIBLE</div></veil-break>
+  <p><a href="/__veilbreak/playground" style="color:#38bdf8;">Open Live 14-Invariant Diagnostic Playground →</a></p>
 </body></html>`;
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": Buffer.byteLength(html) });
     res.end(html);
@@ -73,18 +73,18 @@ async function runDemo(port = 8089, mode = "strict") {
   await new Promise((r) => backend.listen(0, "127.0.0.1", r));
   const bPort = backend.address().port;
 
-  const shield = createCloakGateServer({
+  const shield = createVeilBreakServer({
     target: `http://127.0.0.1:${bPort}`,
     mode,
     protectedPaths: ["/api"],
     autoBlockPage: true,
     onDetect: (ev) => {
-      console.log(`[cloakgate] ${ev.blocked ? "BLOCKED" : "FLAGGED"} ${ev.method} ${ev.path} score=${ev.score}/${ev.threshold} reasons=${ev.reasons.join(",")}`);
+      console.log(`[veilbreak] ${ev.blocked ? "BLOCKED" : "FLAGGED"} ${ev.method} ${ev.path} score=${ev.score}/${ev.threshold} reasons=${ev.reasons.join(",")}`);
     },
   });
   const url = await shield.listen(port, "127.0.0.1");
-  console.log(`[cloakgate] Demo active at ${url} (mode=${mode})`);
-  console.log(`[cloakgate] Diagnostic playground: ${url}/__cloakgate/playground`);
+  console.log(`[veilbreak] Demo active at ${url} (mode=${mode})`);
+  console.log(`[veilbreak] Diagnostic playground: ${url}/__veilbreak/playground`);
 }
 
 async function main() {
@@ -110,14 +110,14 @@ async function main() {
       console.log(JSON.stringify({ ok: true, dryRun, ...plan }, null, 2));
       if (dryRun) return;
     } else {
-      console.log("[cloakgate natural language]");
+      console.log("[veilbreak natural language]");
       console.log(`  You asked: "${plan.input}"`);
       console.log(`  Goal:      ${plan.goal}`);
       console.log(`  Command:   ${plan.command}`);
       console.log("  Why:");
       for (const r of plan.reasons) console.log(`    - ${r}`);
       if (dryRun) {
-        console.log('  Mode:      DRY-RUN (run with "cloakgate ask ..." to execute)');
+        console.log('  Mode:      DRY-RUN (run with "veilbreak ask ..." to execute)');
         return;
       }
     }
@@ -129,12 +129,12 @@ async function main() {
       await runDemo(plan.options.port, plan.options.mode);
       return;
     }
-    const shield = createCloakGateServer({
+    const shield = createVeilBreakServer({
       ...plan.options,
-      onDetect: (ev) => console.log(`[cloakgate] ${ev.blocked ? "BLOCKED" : "FLAGGED"} ${ev.path} score=${ev.score}`),
+      onDetect: (ev) => console.log(`[veilbreak] ${ev.blocked ? "BLOCKED" : "FLAGGED"} ${ev.path} score=${ev.score}`),
     });
     const url = await shield.listen(plan.options.port, "127.0.0.1");
-    console.log(`[cloakgate] Shield listening at ${url} -> ${plan.options.target} (mode=${plan.options.mode})`);
+    console.log(`[veilbreak] Gate listening at ${url} -> ${plan.options.target} (mode=${plan.options.mode})`);
     return;
   }
 
@@ -147,16 +147,16 @@ async function main() {
   if (cmd === "protect") {
     const f = parseFlags(rest);
     if (!f.target) {
-      console.error("Missing --target <url> (example: cloakgate protect --target http://127.0.0.1:3000 --port 8080)");
+      console.error("Missing --target <url> (example: veilbreak protect --target http://127.0.0.1:3000 --port 8080)");
       process.exit(1);
     }
-    const shield = createCloakGateServer({
+    const shield = createVeilBreakServer({
       target: f.target,
       mode: f.mode || "strict",
       protectedPaths: f.protectedPaths || ["/api"],
     });
     const url = await shield.listen(f.port || 8080, f.host || "127.0.0.1");
-    console.log(`[cloakgate] Shield active at ${url} -> ${f.target} (mode=${shield.mode})`);
+    console.log(`[veilbreak] Gate active at ${url} -> ${f.target} (mode=${shield.mode})`);
     return;
   }
 

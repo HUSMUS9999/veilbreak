@@ -1,0 +1,613 @@
+{
+  "version": "2.0.0",
+  "mode": "strict",
+  "timestamp": "2026-11-24T10:43:24Z",
+  "results": [
+    {
+      "label": "ctrl_chrome_158",
+      "mode": "strict",
+      "probeMs": 10.1,
+      "stage1": {
+        "blocked": false,
+        "score": 0,
+        "threshold": 2,
+        "reasons": [],
+        "wcStatus": "allowed",
+        "apiPassiveStatus": 200,
+        "apiPassiveOk": true
+      },
+      "stage2": {
+        "clickBlocked": false,
+        "clickScore": 0,
+        "clickReasons": [],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 13,
+          "zeroMoveCount": 1,
+          "dwellMs": 87.6,
+          "hitExactCenter": false
+        },
+        "combinedBlocked": false,
+        "apiActiveStatus": 200,
+        "apiActiveOk": true
+      },
+      "category": "Control (Genuine Browser)",
+      "name": "Google Chrome 158 (Clean Desktop)"
+    },
+    {
+      "label": "ctrl_firefox_153",
+      "mode": "strict",
+      "probeMs": 53,
+      "stage1": {
+        "blocked": false,
+        "score": 0,
+        "threshold": 2,
+        "reasons": [],
+        "wcStatus": "allowed",
+        "apiPassiveStatus": 200,
+        "apiPassiveOk": true
+      },
+      "stage2": {
+        "clickBlocked": false,
+        "clickScore": 0,
+        "clickReasons": [],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 17,
+          "zeroMoveCount": 1,
+          "dwellMs": 88,
+          "hitExactCenter": false
+        },
+        "combinedBlocked": false,
+        "apiActiveStatus": 200,
+        "apiActiveOk": true
+      },
+      "category": "Control (Genuine Browser)",
+      "name": "Mozilla Firefox 153 ESR (Clean Desktop)"
+    },
+    {
+      "label": "curl_http_scraper",
+      "category": "Tier 1: HTTP Scraper",
+      "name": "curl / Python urllib",
+      "stage1": {
+        "blocked": true,
+        "score": 6,
+        "threshold": 2,
+        "reasons": [
+          "ATTEST_REQUIRED",
+          "TICKET_REPLAYED_OR_INVALID"
+        ],
+        "wcStatus": "n/a",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": null,
+      "probeMs": 0.0
+    },
+    {
+      "label": "pw_chromium_headless",
+      "stage1": {
+        "blocked": true,
+        "score": 6,
+        "threshold": 2,
+        "reasons": [
+          "AUTOMATION_UA_DENIED (HTTP 403 on page load)"
+        ],
+        "wcStatus": "blocked_http_403",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": null,
+      "probeMs": 0.0,
+      "note": "Blocked at HTTP layer before JS execution",
+      "category": "Tier 2: Standard Automation",
+      "name": "Playwright Chromium (Headless)"
+    },
+    {
+      "label": "pw_chromium_headed",
+      "mode": "strict",
+      "probeMs": 19.4,
+      "stage1": {
+        "blocked": true,
+        "score": 6,
+        "threshold": 2,
+        "reasons": [
+          "WEBDRIVER_FLAG",
+          "VIEWPORT_GEOMETRY_IMPOSSIBILITY"
+        ],
+        "wcStatus": "blocked",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 4,
+        "clickReasons": [
+          "TELEPORT_CLICK_PHYSICS"
+        ],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 1,
+          "zeroMoveCount": 1,
+          "dwellMs": 0.3,
+          "hitExactCenter": true
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 2: Standard Automation",
+      "name": "Playwright Chromium (Headed)"
+    },
+    {
+      "label": "pw_firefox_headless",
+      "mode": "strict",
+      "probeMs": 24,
+      "stage1": {
+        "blocked": true,
+        "score": 8,
+        "threshold": 2,
+        "reasons": [
+          "WEBDRIVER_FLAG",
+          "VIEWPORT_GEOMETRY_IMPOSSIBILITY",
+          "ENGINE_COHERENCE_LIE"
+        ],
+        "wcStatus": "blocked",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 4,
+        "clickReasons": [
+          "TELEPORT_CLICK_PHYSICS"
+        ],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 1,
+          "zeroMoveCount": 1,
+          "dwellMs": 5,
+          "hitExactCenter": true
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 2: Standard Automation",
+      "name": "Playwright Firefox 151 (Headless)"
+    },
+    {
+      "label": "pw_firefox_headed",
+      "mode": "strict",
+      "probeMs": 64,
+      "stage1": {
+        "blocked": true,
+        "score": 8,
+        "threshold": 2,
+        "reasons": [
+          "WEBDRIVER_FLAG",
+          "VIEWPORT_GEOMETRY_IMPOSSIBILITY",
+          "ENGINE_COHERENCE_LIE"
+        ],
+        "wcStatus": "blocked",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 4,
+        "clickReasons": [
+          "TELEPORT_CLICK_PHYSICS"
+        ],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 1,
+          "zeroMoveCount": 1,
+          "dwellMs": 5,
+          "hitExactCenter": true
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 2: Standard Automation",
+      "name": "Playwright Firefox 151 (Headed)"
+    },
+    {
+      "label": "pw_stealth",
+      "stage1": {
+        "blocked": true,
+        "score": 6,
+        "threshold": 2,
+        "reasons": [
+          "AUTOMATION_UA_DENIED (HTTP 403 on page load)"
+        ],
+        "wcStatus": "blocked_http_403",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": null,
+      "probeMs": 0.0,
+      "note": "Blocked at HTTP layer before JS execution",
+      "category": "Tier 3: JS Stealth Plugin",
+      "name": "Playwright + playwright-stealth"
+    },
+    {
+      "label": "puppeteer_stealth",
+      "mode": "strict",
+      "probeMs": 19.3,
+      "stage1": {
+        "blocked": true,
+        "score": 12,
+        "threshold": 2,
+        "reasons": [
+          "WEBGL_HARDWARE_COHERENCE_LIE",
+          "OS_CORE_FONT_LIE",
+          "VIEWPORT_GEOMETRY_IMPOSSIBILITY",
+          "ENGINE_COHERENCE_LIE",
+          "WORKER_REALM_CONTRADICTION"
+        ],
+        "wcStatus": "blocked",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 4,
+        "clickReasons": [
+          "TELEPORT_CLICK_PHYSICS"
+        ],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 1,
+          "zeroMoveCount": 1,
+          "dwellMs": 0.3,
+          "hitExactCenter": true
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 3: JS Stealth Plugin",
+      "name": "Puppeteer + puppeteer-extra-plugin-stealth"
+    },
+    {
+      "label": "cloakbrowser_headless",
+      "mode": "strict",
+      "probeMs": 22.6,
+      "stage1": {
+        "blocked": true,
+        "score": 12,
+        "threshold": 2,
+        "reasons": [
+          "WEBGL_CLEAR_SYNTHETIC_NOISE",
+          "WEBGL_HARDWARE_COHERENCE_LIE",
+          "SILENT_AUDIO_SYNTHETIC_NOISE",
+          "DOMRECT_SUBPIXEL_POISONING",
+          "OS_CORE_FONT_LIE",
+          "CANVAS2D_SYNTHETIC_NOISE"
+        ],
+        "wcStatus": "blocked",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 4,
+        "clickReasons": [
+          "TELEPORT_CLICK_PHYSICS"
+        ],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 1,
+          "zeroMoveCount": 1,
+          "dwellMs": 0.5,
+          "hitExactCenter": true
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 4a: C++-Patched Chromium",
+      "name": "CloakBrowser 146 (Headless)"
+    },
+    {
+      "label": "cloakbrowser_headed",
+      "mode": "strict",
+      "probeMs": 31.1,
+      "stage1": {
+        "blocked": true,
+        "score": 10,
+        "threshold": 2,
+        "reasons": [
+          "WEBGL_CLEAR_SYNTHETIC_NOISE",
+          "SILENT_AUDIO_SYNTHETIC_NOISE",
+          "DOMRECT_SUBPIXEL_POISONING",
+          "OS_CORE_FONT_LIE",
+          "CANVAS2D_SYNTHETIC_NOISE"
+        ],
+        "wcStatus": "blocked",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 4,
+        "clickReasons": [
+          "TELEPORT_CLICK_PHYSICS"
+        ],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 1,
+          "zeroMoveCount": 1,
+          "dwellMs": 0.5,
+          "hitExactCenter": true
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 4a: C++-Patched Chromium",
+      "name": "CloakBrowser 146 (Headed)"
+    },
+    {
+      "label": "camoufox_headless",
+      "mode": "strict",
+      "probeMs": 20,
+      "stage1": {
+        "blocked": true,
+        "score": 4,
+        "threshold": 2,
+        "reasons": [
+          "CANVAS2D_NON_DETERMINISTIC"
+        ],
+        "wcStatus": "blocked",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 4,
+        "clickReasons": [
+          "TELEPORT_CLICK_PHYSICS"
+        ],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 1,
+          "zeroMoveCount": 1,
+          "dwellMs": 6,
+          "hitExactCenter": true
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 4a: C++-Patched Firefox",
+      "name": "Camoufox 158 (Headless)"
+    },
+    {
+      "label": "camoufox_headed",
+      "mode": "strict",
+      "probeMs": 70,
+      "stage1": {
+        "blocked": false,
+        "score": 0,
+        "threshold": 2,
+        "reasons": [],
+        "wcStatus": "allowed",
+        "apiPassiveStatus": 200,
+        "apiPassiveOk": true
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 4,
+        "clickReasons": [
+          "TELEPORT_CLICK_PHYSICS"
+        ],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 1,
+          "zeroMoveCount": 1,
+          "dwellMs": 5,
+          "hitExactCenter": true
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 4a: C++-Patched Firefox",
+      "name": "Camoufox 158 (Headed)"
+    },
+    {
+      "label": "patchright_headless",
+      "stage1": {
+        "blocked": true,
+        "score": 6,
+        "threshold": 2,
+        "reasons": [
+          "AUTOMATION_UA_DENIED (HTTP 403 on page load)"
+        ],
+        "wcStatus": "blocked_http_403",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": null,
+      "probeMs": 0.0,
+      "note": "Blocked at HTTP layer before JS execution",
+      "category": "Tier 4b: CDP-Patched Stealth",
+      "name": "Patchright (Headless)"
+    },
+    {
+      "label": "patchright_headed",
+      "mode": "strict",
+      "probeMs": 13,
+      "stage1": {
+        "blocked": true,
+        "score": 2,
+        "threshold": 2,
+        "reasons": [
+          "VIEWPORT_GEOMETRY_IMPOSSIBILITY"
+        ],
+        "wcStatus": "blocked",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 4,
+        "clickReasons": [
+          "TELEPORT_CLICK_PHYSICS"
+        ],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 1,
+          "zeroMoveCount": 1,
+          "dwellMs": 0.3,
+          "hitExactCenter": true
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 4b: CDP-Patched Stealth",
+      "name": "Patchright (Headed)"
+    },
+    {
+      "label": "rebrowser_headless",
+      "stage1": {
+        "blocked": true,
+        "score": 6,
+        "threshold": 2,
+        "reasons": [
+          "AUTOMATION_UA_DENIED (HTTP 403 on page load)"
+        ],
+        "wcStatus": "blocked_http_403",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": null,
+      "probeMs": 0.0,
+      "note": "Blocked at HTTP layer before JS execution",
+      "category": "Tier 4b: CDP-Patched Stealth",
+      "name": "Rebrowser-Playwright (Headless)"
+    },
+    {
+      "label": "rebrowser_headed",
+      "mode": "strict",
+      "probeMs": 15.4,
+      "stage1": {
+        "blocked": true,
+        "score": 2,
+        "threshold": 2,
+        "reasons": [
+          "VIEWPORT_GEOMETRY_IMPOSSIBILITY"
+        ],
+        "wcStatus": "blocked",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 4,
+        "clickReasons": [
+          "TELEPORT_CLICK_PHYSICS"
+        ],
+        "clickDetails": {
+          "isTrusted": true,
+          "detail": 1,
+          "pointerMoves": 1,
+          "zeroMoveCount": 0,
+          "dwellMs": 0.4,
+          "hitExactCenter": true
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 4b: CDP-Patched Stealth",
+      "name": "Rebrowser-Playwright (Headed)"
+    },
+    {
+      "label": "seleniumbase_uc",
+      "mode": "strict",
+      "probeMs": 15.8,
+      "stage1": {
+        "blocked": true,
+        "score": 6,
+        "threshold": 2,
+        "reasons": [
+          "AUTOMATION_GLOBAL_ARTIFACT",
+          "VIEWPORT_GEOMETRY_IMPOSSIBILITY"
+        ],
+        "wcStatus": "blocked",
+        "apiPassiveStatus": 403,
+        "apiPassiveOk": false
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 6,
+        "clickReasons": [
+          "UNTRUSTED_SYNTHETIC_CLICK"
+        ],
+        "clickDetails": {
+          "isTrusted": false,
+          "detail": 0,
+          "pointerMoves": 0,
+          "zeroMoveCount": 0,
+          "dwellMs": -1,
+          "hitExactCenter": false
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 4b: CDP-Patched Stealth",
+      "name": "SeleniumBase UC Mode (Headed)"
+    },
+    {
+      "label": "nodriver_headed",
+      "mode": "strict",
+      "probeMs": 11.4,
+      "stage1": {
+        "blocked": false,
+        "score": 0,
+        "threshold": 2,
+        "reasons": [],
+        "wcStatus": "allowed",
+        "apiPassiveStatus": 200,
+        "apiPassiveOk": true
+      },
+      "stage2": {
+        "clickBlocked": true,
+        "clickScore": 6,
+        "clickReasons": [
+          "UNTRUSTED_SYNTHETIC_CLICK"
+        ],
+        "clickDetails": {
+          "isTrusted": false,
+          "detail": 0,
+          "pointerMoves": 0,
+          "zeroMoveCount": 0,
+          "dwellMs": -1,
+          "hitExactCenter": false
+        },
+        "combinedBlocked": true,
+        "apiActiveStatus": 403,
+        "apiActiveOk": false
+      },
+      "category": "Tier 4b: Raw-CDP Stealth",
+      "name": "Nodriver (Headed)"
+    }
+  ]
+}

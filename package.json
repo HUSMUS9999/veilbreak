@@ -1,27 +1,29 @@
 {
-  "name": "cloakgate",
-  "version": "1.0.0",
-  "description": "Zero-dependency CloakBrowser & anti-detect browser detection and blocking SDK, <cloak-gate> Web Component, middleware, and plain-English CLI",
+  "name": "veilbreak",
+  "version": "2.0.0",
+  "description": "Zero-dependency universal anti-stealth & browser integrity gate — 14 cross-engine physics invariants, biomechanical click kinematics, <veil-break> Web Component, middleware, and Python verifier",
   "main": "src/index.js",
   "bin": {
-    "cloakgate": "./bin/cloakgate.js"
+    "veilbreak": "./bin/veilbreak.js"
   },
   "scripts": {
-    "test": "node --test test/cloakgate.test.js",
-    "demo": "node bin/cloakgate.js demo"
+    "test": "node --test test/veilbreak.test.js",
+    "demo": "node bin/veilbreak.js demo"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "keywords": [
-    "cloakbrowser",
     "anti-detect",
+    "stealth-browser",
     "bot-detection",
+    "browser-integrity",
     "web-components",
     "browser-fingerprinting",
     "security",
     "anti-scraping",
-    "middleware"
+    "middleware",
+    "zero-dependency"
   ],
   "license": "MIT"
 }

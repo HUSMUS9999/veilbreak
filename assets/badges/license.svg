@@ -1,21 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="126" height="24" viewBox="0 0 126 24" role="img" aria-label="LICENSE: MIT">
-  <defs>
-    <linearGradient id="iceBg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#0A1929"/>
-      <stop offset="100%" stop-color="#071A33"/>
-    </linearGradient>
-    <clipPath id="round">
-      <rect width="126" height="24" rx="5"/>
-    </clipPath>
-  </defs>
-  <g clip-path="url(#round)">
-    <rect width="78" height="24" fill="#000000"/>
-    <rect x="78" width="48" height="24" fill="url(#iceBg)"/>
-    <rect x="78" width="1" height="24" fill="#60A5FA" fill-opacity="0.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="85" height="20" viewBox="0 0 85 20" role="img" aria-label="license: MIT">
+  <linearGradient id="s" x2="0" y2="100%">
+    <stop offset="0" stop-color="#bbb" stop-opacity=".12"/>
+    <stop offset="1" stop-opacity=".14"/>
+  </linearGradient>
+  <clipPath id="r">
+    <rect width="85" height="20" rx="3" fill="#fff"/>
+  </clipPath>
+  <g clip-path="url(#r)">
+    <rect width="49" height="20" fill="#4B5563"/>
+    <rect x="49" width="36" height="20" fill="#0D9488"/>
+    <rect width="85" height="20" fill="url(#s)"/>
   </g>
-  <rect x="0.5" y="0.5" width="125" height="23" rx="4.5" fill="none" stroke="#60A5FA" stroke-opacity="0.6" stroke-width="1"/>
-  <g font-family="DejaVu Sans,Verdana,Geneva,sans-serif" font-size="9.8" font-weight="700" text-anchor="middle" letter-spacing="0.35">
-    <text x="39.0" y="15.3" fill="#94A3B8">LICENSE</text>
-    <text x="102.0" y="15.3" fill="#DBEAFE">MIT</text>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="10.6">
+    <text aria-hidden="true" x="24.5" y="14.6" fill="#010101" fill-opacity=".3">license</text>
+    <text x="24.5" y="13.7">license</text>
+    <text aria-hidden="true" x="67.0" y="14.6" fill="#010101" fill-opacity=".3" font-weight="600">MIT</text>
+    <text x="67.0" y="13.7" font-weight="600">MIT</text>
   </g>
 </svg>
