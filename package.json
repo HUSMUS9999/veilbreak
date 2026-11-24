@@ -1,10 +1,27 @@
 {
   "name": "veilbreak",
   "version": "2.0.0",
-  "description": "Zero-dependency universal anti-stealth & browser integrity gate — 14 cross-engine physics invariants, biomechanical click kinematics, <veil-break> Web Component, middleware, and Python verifier",
+  "description": "Zero-dependency anti-stealth & multi-engine browser integrity gate — 14 cross-engine invariants, interaction kinematics, <veil-break> Web Component, middleware, and Python verifier",
   "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src/",
+    "bin/",
+    "LICENSE",
+    "README.md"
+  ],
   "bin": {
     "veilbreak": "./bin/veilbreak.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HUSMUS9999/veilbreak.git"
+  },
+  "homepage": "https://github.com/HUSMUS9999/veilbreak#readme",
+  "bugs": {
+    "url": "https://github.com/HUSMUS9999/veilbreak/issues"
   },
   "scripts": {
     "test": "node --test test/veilbreak.test.js",

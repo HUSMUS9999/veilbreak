@@ -2,26 +2,29 @@
 "use strict";
 
 const http = require("node:http");
-const { createVeilBreakServer, compileNaturalLanguage } = require("../src/index.js");
+const { createVeilBreakServer, compileNaturalLanguage, normalizeMode } = require("../src/index.js");
 
 function printHelp() {
   console.log(`VeilBreak v2.0.0 — Universal Anti-Stealth & Browser Integrity Gate
 
 Natural-Language Mode:
-  veilbreak ask "block stealth browsers on http://localhost:3000 on port 8080"
-  veilbreak ask "protect http://localhost:3000 while keeping privacy browsers working"
-  veilbreak explain "watch for anti-detect browsers without blocking on http://localhost:3000"
+  node bin/veilbreak.js ask "block stealth browsers on http://localhost:3000 on port 8080"
+  node bin/veilbreak.js ask "protect http://localhost:3000 while keeping privacy browsers working"
+  node bin/veilbreak.js explain "watch for anti-detect browsers without blocking on http://localhost:3000"
 
 Commands:
-  veilbreak protect --target <url> [--port 8080] [--mode strict|balanced|monitor] [--paths /api]
-  veilbreak demo [--port 8089] [--mode strict|balanced]
-  veilbreak snippet [--mode strict|balanced]
-  veilbreak ask "<natural language>" [--dry-run] [--json]
-  veilbreak explain "<natural language>" [--json]
+  node bin/veilbreak.js protect --target <url> [--port 8080] [--host 127.0.0.1]
+                        [--mode strict|balanced|monitor|off] [--paths /api]
+                        [--no-playground] [--no-debug-headers]
+  node bin/veilbreak.js demo [--port 8089] [--host 127.0.0.1] [--mode strict|balanced|monitor]
+  node bin/veilbreak.js snippet [--mode strict|balanced|monitor]
+  node bin/veilbreak.js ask "<natural language>" [--dry-run] [--json]
+  node bin/veilbreak.js explain "<natural language>" [--json]
 `);
 }
 
-function printSnippets(mode = "strict") {
+function printSnippets(rawMode = "strict") {
+  const mode = normalizeMode(rawMode);
   console.log(`<!-- 1. One-line HTML drop-in (blocks stealth & automated browsers across the page) -->
 <script src="/__veilbreak/gate.js" data-mode="${mode}" data-block-page="true"></script>
 
@@ -31,28 +34,79 @@ function printSnippets(mode = "strict") {
   <my-pricing-widget></my-pricing-widget>
 </veil-break>
 
-// 3. Express / Node.js server middleware (zero dependencies)
-const { createVeilBreakMiddleware } = require("veilbreak");
+// 3. Express / Node.js server middleware (from cloned repo — remember to include <script src="/__veilbreak/gate.js"> in your HTML!)
+const { createVeilBreakMiddleware } = require("./src/index.js");
 app.use(createVeilBreakMiddleware({ mode: "${mode}", protectedPaths: ["/api"] }));
 `);
 }
 
-function parseFlags(args) {
-  const opts = {};
+function parsePortStrict(raw) {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > 65535) {
+    throw new Error(`Invalid --port value '${raw}': expected integer 0-65535`);
+  }
+  return n;
+}
+
+function parseFlags(args, { allowPositional = false } = {}) {
+  const opts = { positionals: [] };
+  const valueFlags = new Set(["--target", "--port", "--host", "--mode", "--paths"]);
+  const boolFlags = new Set(["--dry-run", "--json", "--no-playground", "--no-debug-headers", "--no-inject"]);
+
   for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "--target" && args[i + 1]) opts.target = args[++i];
-    else if (a === "--port" && args[i + 1]) opts.port = Number(args[++i]);
-    else if (a === "--host" && args[i + 1]) opts.host = args[++i];
-    else if (a === "--mode" && args[i + 1]) opts.mode = args[++i];
-    else if (a === "--paths" && args[i + 1]) opts.protectedPaths = args[++i].split(",").map((s) => s.trim()).filter(Boolean);
-    else if (a === "--dry-run") opts.dryRun = true;
-    else if (a === "--json") opts.json = true;
+    let a = args[i];
+    let inlineVal = null;
+    if (a.startsWith("--") && a.includes("=")) {
+      const eq = a.indexOf("=");
+      inlineVal = a.slice(eq + 1);
+      a = a.slice(0, eq);
+    }
+
+    if (boolFlags.has(a)) {
+      if (a === "--dry-run") opts.dryRun = true;
+      else if (a === "--json") opts.json = true;
+      else if (a === "--no-playground") opts.enablePlayground = false;
+      else if (a === "--no-debug-headers") opts.exposeDebugHeaders = false;
+      else if (a === "--no-inject") opts.injectGate = false;
+      continue;
+    }
+
+    if (valueFlags.has(a)) {
+      const val = inlineVal !== null ? inlineVal : args[++i];
+      if (val === undefined || (inlineVal === null && val.startsWith("--"))) {
+        throw new Error(`Flag '${a}' requires a value`);
+      }
+      if (a === "--target") opts.target = val;
+      else if (a === "--port") opts.port = parsePortStrict(val);
+      else if (a === "--host") opts.host = val;
+      else if (a === "--mode") opts.mode = normalizeMode(val);
+      else if (a === "--paths") opts.protectedPaths = val.split(",").map((s) => s.trim()).filter(Boolean);
+      continue;
+    }
+
+    if (a.startsWith("-")) {
+      throw new Error(`Unknown flag '${a}'. Run with --help to see supported flags.`);
+    }
+    if (!allowPositional) {
+      throw new Error(`Unexpected argument '${a}'. Run with --help for usage.`);
+    }
+    opts.positionals.push(a);
   }
   return opts;
 }
 
-async function runDemo(port = 8089, mode = "strict") {
+function attachGracefulShutdown(closers) {
+  let closing = false;
+  const shutdown = () => {
+    if (closing) return;
+    closing = true;
+    Promise.all(closers.map((fn) => Promise.resolve().then(fn).catch(() => {}))).finally(() => process.exit(0));
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+async function runDemo(port = 8089, mode = "strict", host = "127.0.0.1", quietStdout = false) {
   const backend = http.createServer((req, res) => {
     if (req.url === "/api/secret") {
       const payload = JSON.stringify({ ok: true, secret: "REAL_BROWSER_ONLY_API_DATA" });
@@ -79,12 +133,15 @@ async function runDemo(port = 8089, mode = "strict") {
     protectedPaths: ["/api"],
     autoBlockPage: true,
     onDetect: (ev) => {
-      console.log(`[veilbreak] ${ev.blocked ? "BLOCKED" : "FLAGGED"} ${ev.method} ${ev.path} score=${ev.score}/${ev.threshold} reasons=${ev.reasons.join(",")}`);
+      console.error(`[veilbreak] ${ev.blocked ? "BLOCKED" : "FLAGGED"} ${ev.method} ${ev.path} score=${ev.score}/${ev.threshold} reasons=${ev.reasons.join(",")}`);
     },
   });
-  const url = await shield.listen(port, "127.0.0.1");
-  console.log(`[veilbreak] Demo active at ${url} (mode=${mode})`);
-  console.log(`[veilbreak] Diagnostic playground: ${url}/__veilbreak/playground`);
+  const url = await shield.listen(port, host);
+  attachGracefulShutdown([() => shield.close(), () => new Promise((r) => backend.close(r))]);
+  if (!quietStdout) {
+    console.log(`[veilbreak] Demo active at ${url} (mode=${mode})`);
+    console.log(`[veilbreak] Diagnostic playground: ${url}/__veilbreak/playground`);
+  }
 }
 
 async function main() {
@@ -102,9 +159,8 @@ async function main() {
 
   if (cmd === "ask" || cmd === "do" || cmd === "explain") {
     const forceDry = cmd === "explain";
-    const flags = parseFlags(rest);
-    const words = rest.filter((w) => !["--dry-run", "--json"].includes(w));
-    const plan = compileNaturalLanguage(words.join(" "));
+    const flags = parseFlags(rest, { allowPositional: true });
+    const plan = compileNaturalLanguage(flags.positionals.join(" "));
     const dryRun = forceDry || Boolean(flags.dryRun);
     if (flags.json) {
       console.log(JSON.stringify({ ok: true, dryRun, ...plan }, null, 2));
@@ -117,45 +173,59 @@ async function main() {
       console.log("  Why:");
       for (const r of plan.reasons) console.log(`    - ${r}`);
       if (dryRun) {
-        console.log('  Mode:      DRY-RUN (run with "veilbreak ask ..." to execute)');
+        console.log('  Mode:      DRY-RUN (run with "node bin/veilbreak.js ask ..." to execute)');
         return;
       }
     }
     if (plan.intent === "snippet") {
-      printSnippets(plan.options.mode);
+      printSnippets(flags.mode || plan.options.mode);
       return;
     }
     if (plan.intent === "demo") {
-      await runDemo(plan.options.port, plan.options.mode);
+      await runDemo(flags.port ?? plan.options.port, flags.mode || plan.options.mode, flags.host || "127.0.0.1", Boolean(flags.json));
       return;
     }
     const shield = createVeilBreakServer({
       ...plan.options,
-      onDetect: (ev) => console.log(`[veilbreak] ${ev.blocked ? "BLOCKED" : "FLAGGED"} ${ev.path} score=${ev.score}`),
+      mode: flags.mode || plan.options.mode,
+      enablePlayground: flags.enablePlayground,
+      exposeDebugHeaders: flags.exposeDebugHeaders,
+      injectGate: flags.injectGate,
+      onDetect: (ev) => console.error(`[veilbreak] ${ev.blocked ? "BLOCKED" : "FLAGGED"} ${ev.method} ${ev.path} score=${ev.score}/${ev.threshold} reasons=${ev.reasons.join(",")}`),
     });
-    const url = await shield.listen(plan.options.port, "127.0.0.1");
-    console.log(`[veilbreak] Gate listening at ${url} -> ${plan.options.target} (mode=${plan.options.mode})`);
+    const url = await shield.listen(flags.port ?? plan.options.port, flags.host || "127.0.0.1");
+    attachGracefulShutdown([() => shield.close()]);
+    if (!flags.json) {
+      console.log(`[veilbreak] Gate listening at ${url} -> ${plan.options.target} (mode=${shield.mode})`);
+    }
     return;
   }
 
   if (cmd === "demo") {
     const f = parseFlags(rest);
-    await runDemo(f.port || 8089, f.mode || "strict");
+    await runDemo(f.port ?? 8089, f.mode || "strict", f.host || "127.0.0.1");
     return;
   }
 
   if (cmd === "protect") {
     const f = parseFlags(rest);
     if (!f.target) {
-      console.error("Missing --target <url> (example: veilbreak protect --target http://127.0.0.1:3000 --port 8080)");
+      console.error("Missing --target <url> (example: node bin/veilbreak.js protect --target http://127.0.0.1:3000 --port 8080)");
       process.exit(1);
     }
     const shield = createVeilBreakServer({
       target: f.target,
       mode: f.mode || "strict",
       protectedPaths: f.protectedPaths || ["/api"],
+      enablePlayground: f.enablePlayground,
+      exposeDebugHeaders: f.exposeDebugHeaders,
+      injectGate: f.injectGate,
+      onDetect: (ev) => {
+        console.error(`[veilbreak] ${ev.blocked ? "BLOCKED" : "FLAGGED"} ${ev.method} ${ev.path} score=${ev.score}/${ev.threshold} reasons=${ev.reasons.join(",")}`);
+      },
     });
-    const url = await shield.listen(f.port || 8080, f.host || "127.0.0.1");
+    const url = await shield.listen(f.port ?? 8080, f.host || "127.0.0.1");
+    attachGracefulShutdown([() => shield.close()]);
     console.log(`[veilbreak] Gate active at ${url} -> ${f.target} (mode=${shield.mode})`);
     return;
   }

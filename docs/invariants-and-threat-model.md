@@ -1,69 +1,62 @@
-# VeilBreak — 14 Physics Invariants, Click Kinematics & Threat Model
+# VeilBreak — 14 Invariants, Click Kinematics & Threat Model
 
-VeilBreak does not rely on brittle User-Agent blocklists or single-browser signatures. Instead, it tests **14 cross-engine hardware, graphics, audio, cross-realm, prototype, geometry, and engine-coherence invariants** (Stage 1) plus a **biomechanical interaction kinematics layer** (Stage 2), all cryptographically bound to one-time server tickets (`VB_ATTEST_V2`).
+[← Back to README](../README.md) · [Beginner's Guide](./getting-started-beginners.md)
+
+VeilBreak checks **14 cross-engine graphics, audio, cross-realm, prototype, geometry, and engine-coherence invariants** (Stage 1) plus a **biomechanical interaction kinematics layer** (Stage 2), bound to single-use server tickets (`VB_ATTEST_V2`).
 
 ---
 
 ## Stage 1: The 14 Passive Invariants
 
-| # | Code | Category | Weight | Exact Invariant | Primary Targets Caught |
-| :-: | :--- | :--- | :-: | :--- | :--- |
-| 1 | `WEBDRIVER_FLAG` | Automation | `+4` | `navigator.webdriver` or untouched `iframe.contentWindow.navigator.webdriver` is `true` | Playwright (Chromium/Firefox), Selenium, Puppeteer |
-| 2 | `AUTOMATION_GLOBAL_ARTIFACT` | Automation | `+4` | `window` or `document` owns `$cdc_*`/`cdc_*`/`__playwright*`/`__pw*`/`__puppeteer*`/`__webdriver*`/`domAutomation*` | SeleniumBase UC, Chromedriver, Playwright, Puppeteer |
-| 3 | `CDP_RUNTIME_ENABLE` | Protocol | `+4` | `console.debug(err)` triggers custom `Error.stack` getter side-channel | Active CDP `Runtime.enable` scrapers & AI agents |
-| 4 | `WEBDRIVER_GETTER_SPOOFED` | Prototype | `+4` | Own-property `navigator.webdriver` override or `Navigator.prototype.webdriver` getter fails native `function (get )?webdriver() { [native code] }` across Chromium & Gecko | `playwright-stealth`, custom JS webdriver overrides |
-| 5 | `NATIVE_FUNCTION_TAMPERED` | Cross-Realm | `+4` | Fresh `iframe.contentWindow.Function.prototype.toString` exposes wrapped/non-native getters or main-vs-iframe divergence on `platform`, `userAgent`, `permissions.query`, `toDataURL`, `getImageData`, `getParameter`, `getOwnPropertyDescriptor` | `playwright-stealth`, JS stealth plugins |
-| 6 | `WORKER_REALM_CONTRADICTION` | Cross-Realm | `+4` | `Web Worker` (`self.navigator` + `OffscreenCanvas`) reports a different `platform`, `hardwareConcurrency`, `userAgent`, or WebGL renderer than the main thread | `puppeteer-extra-plugin-stealth`, main-world spoofers |
-| 7 | `CANVAS2D_SYNTHETIC_NOISE` / `CANVAS2D_NON_DETERMINISTIC` | Graphics Physics | `+2` / `+4` | Flat `#808080` 2D Canvas or `OffscreenCanvas` produces `> 1` unique RGB color, OR two identical draws differ (`repeatDiff > 0`) | CloakBrowser, Camoufox, noise-injecting Chromium/Gecko forks |
-| 8 | `WEBGL_CLEAR_SYNTHETIC_NOISE` | Graphics Physics | `+2` | `gl.clearColor(0.5, 0.5, 0.5, 1.0)` + `gl.readPixels()` yields `> 1` unique color | CloakBrowser, Camoufox, WebGL-noise forks |
-| 9 | `WEBGL_HARDWARE_COHERENCE_LIE` | Hardware Physics | `+2` | Discrete GPU / D3D11 string with `<= 19` WebGL extensions (Mesa `llvmpipe` masking as NVIDIA/D3D11); Maxwell/Pascal GTX 6/7/9/10 claiming `MAX_TEXTURE_SIZE >= 32768`; macOS-only renderer on claimed Windows; D3D11 on claimed Linux; or D3D11 RTX missing `KHR_parallel_shader_compile` with `< 30` extensions | Camoufox, CloakBrowser, `puppeteer-stealth`, `playwright-stealth` |
-| 10 | `SILENT_AUDIO_SYNTHETIC_NOISE` | Audio Physics | `+2` | All-zero `OfflineAudioContext` buffer renders non-zero samples (`|x| > 1e-12`) | CloakBrowser, audio-noise anti-detect forks |
-| 11 | `DOMRECT_SUBPIXEL_POISONING` | Layout Physics | `+2` | Integer-DPR fixed `10x20 100x50` box `getBoundingClientRect()` drifts `> 1e-3 px` | CloakBrowser, DOMRect-poisoning forks |
-| 12 | `OS_CORE_FONT_LIE` | OS Physics | `+2` | Claims Windows with `0` Windows core fonts (`Segoe UI`/`Tahoma`/`Consolas`/`Calibri`), or claims macOS with `0` macOS core fonts (`Helvetica Neue`/`Geneva`/`Menlo`) | CloakBrowser, `puppeteer-stealth`, `playwright-stealth`, cross-OS spoofers |
-| 13 | `VIEWPORT_GEOMETRY_IMPOSSIBILITY` | Window Physics | `+2` | Non-fullscreen desktop where `outerHeight > screen.height + 16` or `outerWidth > screen.width + 16` (CDP `setDeviceMetricsOverride` leak), OR zero browser chrome (`outer === inner === screen`), OR desktop with zero fine pointer and zero hover | Patchright (headed & headless), Rebrowser-Playwright (headed & headless), Playwright, Puppeteer-Stealth, SeleniumBase UC |
-| 14 | `ENGINE_COHERENCE_LIE` | Engine Coherence | `+2` | `Notification.permission === "default"` while `permissions.query({name:"notifications"}).state !== "prompt"`, OR Gecko/Firefox with `plugins.length === 0 && pdfViewerEnabled === false` | `playwright-stealth`, `puppeteer-stealth`, Playwright Firefox |
+| # | Code | Weight | Exact Check | Primary Targets |
+| :-: | :--- | :-: | :--- | :--- |
+| 1 | `WEBDRIVER_FLAG` | `+4` | `navigator.webdriver` or untouched `iframe.contentWindow.navigator.webdriver` is `true` | Playwright, Selenium, Puppeteer |
+| 2 | `AUTOMATION_GLOBAL_ARTIFACT` | `+4` | `window`/`document` owns `$cdc_*`, `cdc_*`, `__playwright*`, `__pw_manual`, `__pwInitScripts`, `__puppeteer*`, `__webdriver*`, `domAutomation*` | SeleniumBase UC, Chromedriver, Playwright |
+| 3 | `CDP_RUNTIME_ENABLE` | `+4` | `console.debug(err)` invokes custom `Error.stack` getter side-channel *(also fires when DevTools is open)* | Active CDP `Runtime.enable` scrapers |
+| 4 | `WEBDRIVER_GETTER_SPOOFED` | `+4` | Own-property `navigator.webdriver` override or non-native `Navigator.prototype.webdriver` getter | `playwright-stealth`, custom JS spoofers |
+| 5 | `NATIVE_FUNCTION_TAMPERED` | `+4` | Fresh `iframe.contentWindow.Function.prototype.toString` mismatches main-thread `toString` or `[native code]` on core APIs (`toDataURL`, `getImageData`, `getParameter` WebGL1/2, `platform`, `userAgent`, `permissions.query`) | `playwright-stealth`, JS stealth wrappers |
+| 6 | `WORKER_REALM_CONTRADICTION` | `+4` | `Web Worker` (`self.navigator`) reports a different `platform`, `hardwareConcurrency`, `userAgent`, or `webdriver` state than the main thread | `puppeteer-extra-plugin-stealth` |
+| 7 | `CANVAS2D_SYNTHETIC_NOISE` / `NON_DETERMINISTIC` | `+2` / `+4` | Flat `#808080` Canvas2D or `OffscreenCanvas` produces `> 1` unique RGB color (`+2`), or two identical renders differ (`+4`) | CloakBrowser, Camoufox, noise forks |
+| 8 | `WEBGL_CLEAR_SYNTHETIC_NOISE` | `+2` | Dither-disabled `gl.clearColor(128/255, ...)` + `gl.readPixels()` yields `> 1` unique color | CloakBrowser, WebGL-noise forks |
+| 9 | `WEBGL_HARDWARE_COHERENCE_LIE` | `+2` | Discrete/D3D11 GPU string with impossibly low extension count (`<= 12` WebGL2 / `<= 19` WebGL1), GTX 6/7/9xx claiming `MAX_TEXTURE_SIZE >= 32768`, macOS renderer on claimed Windows, D3D11 on claimed Linux, or Chromium D3D11 RTX missing `KHR_parallel_shader_compile` (`< 30` exts) | Camoufox, CloakBrowser, `puppeteer-stealth` |
+| 10 | `SILENT_AUDIO_SYNTHETIC_NOISE` | `+2` | All-zero `OfflineAudioContext` buffer renders non-zero samples (`|x| > 1e-12`, 1.5s timeout-guarded) | CloakBrowser, audio-noise forks |
+| 11 | `DOMRECT_SUBPIXEL_POISONING` | `+2` | CSP-safe CSSOM fixed `10×20` `100×50` box at integer DPR drifts within `(1e-3, 1.5) px` | CloakBrowser, DOMRect-poisoning forks |
+| 12 | `OS_CORE_FONT_LIE` | `+2` | Claims desktop Windows or macOS (non-touch) with `0` OS core fonts while `sans-serif !== monospace` (`base > 0`) | CloakBrowser, `puppeteer-stealth`, cross-OS spoofers |
+| 13 | `VIEWPORT_GEOMETRY_IMPOSSIBILITY` | `+2` | Integer-DPR non-fullscreen desktop (excluding touch tablets) where `outer > screen + 16` or zero chrome on a sub-screen window (F11/PWA/tiling-WM safe) | Patchright, Rebrowser, Playwright, SeleniumBase UC |
+| 14 | `ENGINE_COHERENCE_LIE` | `+2` | Genuine `Notification.permission` contradiction (`default`/`denied` while `permissions.query` reports `granted`, 900ms timeout-guarded) | Broken permission-spoofing scripts |
 
 ---
 
 ## Stage 2: Biomechanical Interaction Kinematics
 
-When a visitor clicks a protected action button before calling a protected API, VeilBreak evaluates pointer biomechanics:
+When a user interacts with a visible control before calling a protected API, VeilBreak evaluates pointer kinematics (resetting per click):
 
 - **`UNTRUSTED_SYNTHETIC_CLICK` (`+6`)**: `event.isTrusted === false` (catches Nodriver `.click()`, SeleniumBase UC `.uc_click()`, and synthetic DOM dispatch).
-- **`TELEPORT_CLICK_PHYSICS` (`+4`)**: `event.isTrusted === true && event.detail >= 1` with `pointerMoves <= 3`, `dwellMs < 12 ms` (`pointerdown` → `pointerup`), and exact geometric center hit (`< 0.75 px`). In live testing, automated CDP/Juggler clicks average `0.1–5.0 ms` dwell with `1–2` pointer moves, whereas real human mouse clicks average `40–180 ms` dwell with `10–60+` pointer moves.
-- **Accessibility Exemption (`0` penalty)**: Trusted keyboard activation (`Enter` / `Space` on a focused control emits `isTrusted === true` and `detail === 0`) is explicitly exempted so screen-reader and keyboard-only users experience zero friction.
+- **`TELEPORT_CLICK_PHYSICS` (`+4`)**: `event.isTrusted === true && event.detail >= 1` (non-touch/non-pen) with `pointerMoves <= 3`, `pointerdown`→`click` `dwellMs < 12 ms`, and exact geometric center hit (`< 0.75 px`).
+- **`ZERO_TRAJECTORY_INSTANT_CLICK` (`+4`)**: `event.isTrusted === true && event.detail >= 1` (non-touch/non-pen) with `pointerMoves === 0` and `0 < dwellMs < 8 ms` (excludes `dwellMs === 0` coarsened privacy timers).
+- **Accessibility & Mobile Exemptions (`0` penalty)**: Trusted keyboard activation (`Enter`/`Space` → `isTrusted === true && detail === 0`) and `touch` / `pen` pointer events are explicitly exempted.
 
 ---
 
-## Cryptographic Server Attestation (`VB_ATTEST_V2`)
+## One-Time Ticket Telemetry Envelope (`VB_ATTEST_V2`)
 
-Every protected API request carries a one-time server ticket (`X-VB-Ticket`), client nonce (`X-VB-Nonce`), and SHA-256 attestation digest (`X-VB-Attest`):
+Every protected API request carries a single-use server ticket (`X-VB-Ticket`), client nonce (`X-VB-Nonce`), and SHA-256 telemetry digest (`X-VB-Attest`):
 
 ```text
 SHA-256("VB_ATTEST_V2|" + ticket + "|" + nonce + "|" + score + "|" + flags + "|" + platform)
 ```
 
-Server middleware additionally enforces:
-- One-time ticket consumption (`TICKET_REPLAYED_OR_INVALID`)
-- Headless/automation User-Agent & `Sec-CH-UA` denial (`AUTOMATION_UA_DENIED`)
-- `User-Agent` vs `Sec-CH-UA-Platform` vs `navigator.platform` cross-checks (`OS_HEADER_CONTRADICTION`, `OS_PLATFORM_CONTRADICTION`)
-- Chrome 115+ legacy GREASE brand lie (`SEC_CH_UA_GREASE_LIE`)
-
----
-
-## Modes & Privacy Browser Compatibility
-
-| Mode | Threshold | Behavior | Recommended For |
-| :--- | :-: | :--- | :--- |
-| `strict` *(default)* | `>= 2` | Blocks on any single triggered invariant, missing/replayed ticket, or automation UA | High-value APIs, pricing/data endpoints, anti-scraping protection |
-| `balanced` | `>= 4` | Requires multiple corroborating physics failures or a high-confidence automation/cross-realm invariant; allows Canvas-only privacy browsers (e.g., Brave/LibreWolf farbling) | Consumer web apps prioritizing privacy-browser compatibility |
-| `monitor` | `∞` | Never blocks; attaches `X-VeilBreak-Score` and emits `onDetect` telemetry callbacks | Gradual rollout, traffic auditing, tuning |
-| `off` | `∞` | Completely disabled | Local development |
+Server verification (identical in Node.js `src/probes.js` and Python `python/veilbreak.py` + `VeilBreakTicketStore`) enforces:
+- One-time ticket consumption in both `strict` and `balanced` modes (`TICKET_REPLAYED_OR_INVALID`, `+6`)
+- Path normalization (`//api`, `/%61pi`, `/API`, `/./api`)
+- Strict schema validation (`v === 2`, integer bounds, no `|` delimiter injection, flag-vs-score consistency, server-side flag bitmask decoding)
+- Headless/automation UA & `Sec-CH-UA` denial (`AUTOMATION_UA_DENIED`, `+6`, enforced before ticket issuance too)
+- `User-Agent` vs `Sec-CH-UA-Platform` vs `navigator.platform` cross-checks and Chrome 115+ legacy GREASE check
 
 ---
 
 ## Honest Threat Model & Irreducible Boundaries
 
-- **What VeilBreak blocks at Stage 1 (passive load, `< 20 ms`)**: `curl`/HTTP scrapers, standard Playwright (Chromium & Firefox, headless & headed), `playwright-stealth`, `puppeteer-extra-plugin-stealth`, CloakBrowser (headless & headed), Camoufox (headless & noise/cross-OS profiles), Patchright (headless & headed), Rebrowser-Playwright (headless & headed), and SeleniumBase UC Mode.
-- **What requires Stage 2 (interaction kinematics)**: A genuine, unmodified, headed Chrome or Firefox binary driven on its native OS without viewport emulation and without canvas/WebGL noise (such as **Nodriver (Headed)** or **Camoufox (Headed)** when rolling a matching-OS zero-noise profile) can look indistinguishable from a real desktop browser on pure passive load, and is caught when interacting via Stage-2 kinematics.
-- **Irreducible client-side boundary**: A human physically operating a real browser — or a custom, real-GPU, human-speed OS-level input robot controlling an unmodified desktop browser with no CDP/WebDriver instrumentation — sits at the irreducible boundary of browser-side detection. Pair VeilBreak with rate limiting, authentication, and server-side business logic for defense in depth.
+- **Unkeyed client digest boundary:** Because `VB_ATTEST_V2` uses a public SHA-256 over client-reported fields, a motivated attacker who inspects `gate.js` can fetch a ticket with a desktop `User-Agent` and compute a clean `s=0, f=0` digest in a custom script without running a real browser. VeilBreak stops automated/stealth browsers operating through normal web sessions and raises the bar against off-the-shelf scrapers; always pair with authentication, rate limiting, and server-side policy.
+- **Stage-1 vs. Stage-2 coverage:** Unmodified headed Chrome/Firefox driven without viewport overrides or synthetic noise (e.g., Nodriver Headed, or Camoufox Headed on a matching-OS zero-noise profile) can pass Stage 1 and are caught at Stage 2 when clicking programmatically. A bot simulating realistic multi-step OS pointer motion or keyboard focus+Enter sits at the irreducible client-side boundary.
+- **Privacy browser & DevTools trade-offs:** `balanced` (`>= 4`) tolerates single-signal Canvas-only farbling (`+2`), while multi-signal privacy profiles (Brave Shields Strict, LibreWolf / Firefox RFP, Tor Browser) or open DevTools (`CDP_RUNTIME_ENABLE`, `+4`) can exceed `4`. Test in `monitor` mode before switching to blocking on consumer traffic.

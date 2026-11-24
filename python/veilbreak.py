@@ -1,6 +1,6 @@
 """
-VeilBreak Python Verifier (Zero Dependencies, Python >= 3.10).
-Wire-compatible with the VeilBreak v2 browser SDK (`VB_ATTEST_V2|` SHA-256 attestation).
+VeilBreak Python Verifier & One-Time Ticket Store (Zero Dependencies, Python >= 3.10).
+Wire- and validation-compatible with the VeilBreak v2 browser SDK (`VB_ATTEST_V2|` SHA-256 envelope).
 """
 
 from __future__ import annotations
@@ -8,8 +8,33 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import re
+import secrets
+import time
 from dataclasses import dataclass, field
+
+FLAG_REASON_MAP: tuple[tuple[int, str], ...] = (
+    (1 << 0, "CANVAS2D_SYNTHETIC_NOISE"),
+    (1 << 1, "WEBGL_CLEAR_SYNTHETIC_NOISE"),
+    (1 << 2, "SILENT_AUDIO_SYNTHETIC_NOISE"),
+    (1 << 3, "DOMRECT_SUBPIXEL_POISONING"),
+    (1 << 4, "OS_CORE_FONT_LIE"),
+    (1 << 5, "WEBGL_HARDWARE_COHERENCE_LIE"),
+    (1 << 6, "WEBDRIVER_FLAG"),
+    (1 << 7, "CDP_RUNTIME_ENABLE"),
+    (1 << 8, "AUTOMATION_GLOBAL_ARTIFACT"),
+    (1 << 9, "WEBDRIVER_GETTER_SPOOFED"),
+    (1 << 10, "NATIVE_FUNCTION_TAMPERED"),
+    (1 << 11, "WORKER_REALM_CONTRADICTION"),
+    (1 << 12, "VIEWPORT_GEOMETRY_IMPOSSIBILITY"),
+    (1 << 13, "ENGINE_COHERENCE_LIE"),
+    (1 << 14, "SYNTHETIC_INTERACTION"),
+)
+
+
+def decode_flags(flags: int) -> list[str]:
+    return [name for bit, name in FLAG_REASON_MAP if (flags & bit) != 0]
 
 
 @dataclass
@@ -17,34 +42,49 @@ class VeilBreakVerdict:
     ok: bool
     blocked: bool
     score: int
-    threshold: int
+    threshold: int | float
     mode: str
     reasons: list[str] = field(default_factory=list)
 
 
+def _normalize_headers(headers: dict | None) -> dict[str, str]:
+    if not isinstance(headers, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in headers.items():
+        kl = str(k).lower()
+        if kl in out:
+            continue  # first-key precedence matches Node.js getHeader
+        if isinstance(v, (list, tuple)):
+            out[kl] = ", ".join("" if x is None else str(x) for x in v)
+        else:
+            out[kl] = "" if v is None else str(v)
+    return out
+
+
 def verify_attestation(
     *,
-    mode: str = "strict",
-    headers: dict[str, str],
+    mode: str | None = "strict",
+    headers: dict | None,
     attest: dict | str | None,
     ticket: str = "",
     nonce: str = "",
 ) -> VeilBreakVerdict:
-    m = mode.strip().lower()
+    m = str(mode or "strict").strip().lower()
     if m not in ("off", "monitor", "balanced", "strict"):
         raise ValueError(f"Unsupported VeilBreak mode: {mode}")
-    threshold = 2 if m == "strict" else (4 if m == "balanced" else 999)
+    threshold: int | float = 2 if m == "strict" else (4 if m == "balanced" else math.inf)
     if m == "off":
         return VeilBreakVerdict(True, False, 0, threshold, m)
 
-    hdr = {k.lower(): v for k, v in headers.items()}
+    hdr = _normalize_headers(headers)
     ua = hdr.get("user-agent", "")
     sec_ch_ua = hdr.get("sec-ch-ua", "")
     sec_plat = hdr.get("sec-ch-ua-platform", "").replace('"', "").lower()
     reasons: list[str] = []
     score = 0
 
-    if m == "strict" and (
+    if m in ("strict", "balanced") and (
         re.search(r"HeadlessChrome|Playwright|Puppeteer|PhantomJS|SlimerJS", ua, re.I)
         or re.search(r"HeadlessChrome", sec_ch_ua, re.I)
     ):
@@ -68,38 +108,60 @@ def verify_attestation(
         reasons.append("SEC_CH_UA_GREASE_LIE")
         score += 2
 
-    if isinstance(attest, str):
-        try:
-            attest = json.loads(attest)
-        except Exception:
-            attest = {"invalid": True}
+    att_obj = attest
+    if isinstance(att_obj, str):
+        stripped = att_obj.strip()
+        if not stripped:
+            att_obj = None
+        else:
+            try:
+                att_obj = json.loads(stripped)
+            except Exception:
+                att_obj = {"invalid": True}
 
-    if not isinstance(attest, dict):
-        if m == "strict":
+    tk_str = "" if ticket is None else str(ticket)
+    nn_str = "" if nonce is None else str(nonce)
+
+    if att_obj is None:
+        if m in ("strict", "balanced"):
             reasons.append("ATTEST_REQUIRED")
             score += 6
+    elif not isinstance(att_obj, dict):
+        reasons.append("ATTEST_INVALID")
+        score += 6
     else:
-        s = attest.get("s")
-        f = attest.get("f")
-        p = str(attest.get("p", ""))[:48]
-        d = str(attest.get("d", ""))
-        if (
-            not isinstance(s, int)
-            or isinstance(s, bool)
-            or s < 0
-            or not isinstance(f, int)
-            or isinstance(f, bool)
-            or f < 0
-            or len(d) != 64
-        ):
+        v = att_obj.get("v")
+        s = att_obj.get("s")
+        f = att_obj.get("f")
+        p_raw = att_obj.get("p")
+        p = ("" if p_raw is None else str(p_raw))[:48]
+        d = att_obj.get("d") if isinstance(att_obj.get("d"), str) else ""
+
+        valid_nums = (
+            (v is None or (isinstance(v, int) and not isinstance(v, bool) and v == 2))
+            and isinstance(s, int)
+            and not isinstance(s, bool)
+            and 0 <= s <= 10_000
+            and isinstance(f, int)
+            and not isinstance(f, bool)
+            and 0 <= f <= 0xFFFFF
+        )
+        valid_delims = ("|" not in tk_str) and ("|" not in nn_str) and ("|" not in p)
+        valid_hex = bool(re.fullmatch(r"[0-9a-fA-F]{64}", d))
+        coherent_flag_score = not (f > 0 and s == 0)
+
+        if not (valid_nums and valid_delims and valid_hex and coherent_flag_score):
             reasons.append("ATTEST_INVALID")
             score += 6
         else:
-            expected = hashlib.sha256(f"VB_ATTEST_V2|{ticket}|{nonce}|{s}|{f}|{p}".encode("utf-8")).hexdigest()
-            if not hmac.compare_digest(d, expected):
+            expected = hashlib.sha256(f"VB_ATTEST_V2|{tk_str}|{nn_str}|{s}|{f}|{p}".encode("utf-8")).hexdigest()
+            if not hmac.compare_digest(d.lower(), expected):
                 reasons.append("ATTEST_DIGEST_MISMATCH")
                 score += 6
             score += s
+            for rname in decode_flags(f):
+                if rname not in reasons:
+                    reasons.append(rname)
             if s >= threshold:
                 reasons.append("BROWSER_INVARIANTS_FAILED")
             if (
@@ -116,3 +178,55 @@ def verify_attestation(
     )
     blocked = m != "monitor" and (score >= threshold or hard_fail)
     return VeilBreakVerdict(not blocked, blocked, score, threshold, m, reasons)
+
+
+class VeilBreakTicketStore:
+    """
+    Zero-dependency one-time ticket store & request verifier for FastAPI/Flask/Django,
+    providing full replay-protection parity with the Node.js VeilBreak middleware.
+    """
+
+    def __init__(self, *, mode: str = "strict", ticket_ttl_ms: int = 60_000, max_tickets: int = 30_000) -> None:
+        self.mode = str(mode or "strict").strip().lower()
+        if self.mode not in ("off", "monitor", "balanced", "strict"):
+            raise ValueError(f"Unsupported VeilBreak mode: {mode}")
+        self.ticket_ttl_ms = ticket_ttl_ms
+        self.max_tickets = max_tickets
+        self._tickets: dict[str, float] = {}
+
+    def mint_ticket(self) -> str:
+        now = time.time() * 1000.0
+        if len(self._tickets) >= self.max_tickets:
+            expired = [k for k, exp in self._tickets.items() if exp <= now]
+            for k in expired:
+                self._tickets.pop(k, None)
+            if len(self._tickets) >= self.max_tickets:
+                target = int(self.max_tickets * 0.85)
+                for k in list(self._tickets.keys()):
+                    self._tickets.pop(k, None)
+                    if len(self._tickets) <= target:
+                        break
+        tk = secrets.token_hex(16)
+        self._tickets[tk] = now + float(self.ticket_ttl_ms)
+        return tk
+
+    def consume_ticket(self, ticket: str) -> bool:
+        if not ticket:
+            return False
+        now = time.time() * 1000.0
+        exp = self._tickets.pop(ticket, None)
+        return exp is not None and exp > now
+
+    def verify_request(self, *, headers: dict | None) -> VeilBreakVerdict:
+        hdr = _normalize_headers(headers)
+        ticket = hdr.get("x-vb-ticket", "")
+        nonce = hdr.get("x-vb-nonce", "")
+        attest = hdr.get("x-vb-attest")
+        ticket_ok = self.consume_ticket(ticket)
+        verdict = verify_attestation(mode=self.mode, headers=hdr, attest=attest, ticket=ticket, nonce=nonce)
+        if self.mode in ("strict", "balanced") and not ticket_ok:
+            verdict.blocked = True
+            verdict.ok = False
+            verdict.score += 6
+            verdict.reasons.append("TICKET_REPLAYED_OR_INVALID")
+        return verdict

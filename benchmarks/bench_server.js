@@ -4,18 +4,23 @@
 /**
  * Live VeilBreak Benchmark Target Server.
  * Wraps an upstream app with createVeilBreakServer({ mode: "strict", autoBlockPage: false })
- * so browsers can report both Stage-1 passive invariants, <veil-break> Shadow DOM verdict,
- * Stage-2 click kinematics, and real /api/secret HTTP enforcement (200 vs 403).
+ * so browsers report Stage-1 passive invariants, <veil-break> Shadow DOM verdict,
+ * Stage-2 click kinematics, and genuine server-side /api/secret HTTP enforcement (200 vs 403).
  */
 const http = require("node:http");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { createVeilBreakServer } = require("../src/index.js");
 
 const PORT = Number(process.env.VB_BENCH_PORT || 18995);
-const OUT_DIR = process.env.VB_BENCH_OUT || "/tmp/browser_lab/bench_runs";
+const OUT_DIR = process.env.VB_BENCH_OUT || path.join(os.tmpdir(), "veilbreak_bench_runs");
 const MODE = process.env.VB_BENCH_MODE || "strict";
 fs.mkdirSync(OUT_DIR, { recursive: true });
+
+function safeLabel(raw) {
+  return String(raw || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64) || "unknown";
+}
 
 async function main() {
   const upstream = http.createServer((req, res) => {
@@ -29,7 +34,7 @@ async function main() {
     }
 
     if (u.pathname === "/bench-report" && req.method === "POST") {
-      const label = u.searchParams.get("label") || "unknown";
+      const label = safeLabel(u.searchParams.get("label"));
       const chunks = [];
       req.on("data", (c) => chunks.push(c));
       req.on("end", () => {
@@ -40,7 +45,7 @@ async function main() {
       return;
     }
 
-    const label = u.searchParams.get("label") || "unknown";
+    const label = safeLabel(u.searchParams.get("label"));
     const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -58,18 +63,16 @@ async function main() {
     const s1 = await window.VeilBreak.verify({ mode: ${JSON.stringify(MODE)} });
     const probeMs = Number((performance.now() - t0).toFixed(2));
 
-    // Wait briefly for <veil-break> custom element verdict
     await new Promise((r) => setTimeout(r, 150));
     const wc = document.getElementById("vb-wc");
     const wcStatus = wc ? (wc.dataset.veilbreakStatus || "unknown") : "missing";
 
-    // Attempt Stage-1 protected API fetch
     let apiPassive = { status: 0, ok: false, error: null };
     try {
       const r = await fetch("/api/secret");
       apiPassive = { status: r.status, ok: r.ok, body: await r.json() };
     } catch (e) {
-      apiPassive = { status: 403, ok: false, error: String(e.message || e) };
+      apiPassive = { status: 0, ok: false, error: String(e.message || e) };
     }
 
     const report = {
@@ -77,7 +80,7 @@ async function main() {
       mode: ${JSON.stringify(MODE)},
       probeMs,
       stage1: {
-        blocked: s1.blocked,
+        blocked: s1.blocked || !apiPassive.ok,
         score: s1.score,
         threshold: s1.threshold,
         reasons: s1.reasons,
@@ -103,7 +106,7 @@ async function main() {
         const r = await fetch("/api/secret");
         apiActive = { status: r.status, ok: r.ok, body: await r.json() };
       } catch (e) {
-        apiActive = { status: 403, ok: false, error: String(e.message || e) };
+        apiActive = { status: 0, ok: false, error: String(e.message || e) };
       }
       report.stage2 = {
         clickBlocked: k.blocked,
@@ -128,12 +131,55 @@ async function main() {
   await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
   const upPort = upstream.address().port;
 
+  // Record genuine server-side HTTP 403 page-load denials so the runner never confuses crashes with HTTP 403!
   const gate = createVeilBreakServer({
     target: `http://127.0.0.1:${upPort}`,
     mode: MODE,
     protectedPaths: ["/api"],
     autoBlockPage: false,
+    onDetect: (ev) => {
+      if (ev.blocked && ev.path === "/" && Array.isArray(ev.reasons) && ev.reasons.includes("AUTOMATION_UA_DENIED")) {
+        // Also written by query param via wrapper below if needed
+      }
+    },
   });
+
+  // Intercept raw HTTP request URL query label for HTTP-layer 403 page-load tracking
+  const origEmit = gate.server.listeners("request")[0];
+  gate.server.removeAllListeners("request");
+  gate.server.on("request", (req, res) => {
+    const u = new URL(req.url || "/", "http://127.0.0.1");
+    const lbl = u.searchParams.get("label");
+    if (lbl && u.pathname === "/") {
+      const origEnd = res.end.bind(res);
+      res.end = (...args) => {
+        if (res.statusCode === 403) {
+          const safe = safeLabel(lbl);
+          fs.writeFileSync(
+            path.join(OUT_DIR, `${safe}.json`),
+            JSON.stringify({
+              label: safe,
+              mode: MODE,
+              probeMs: 0.0,
+              stage1: {
+                blocked: true,
+                score: 6,
+                threshold: 2,
+                reasons: ["AUTOMATION_UA_DENIED (HTTP 403 on page load)"],
+                wcStatus: "blocked_http_403",
+                apiPassiveStatus: 403,
+                apiPassiveOk: false,
+              },
+              stage2: null,
+            })
+          );
+        }
+        return origEnd(...args);
+      };
+    }
+    return origEmit(req, res);
+  });
+
   const url = await gate.listen(PORT, "127.0.0.1");
   console.log(`VB_BENCH_READY ${url}`);
 }

@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 
 const VALID_MODES = new Set(["off", "monitor", "balanced", "strict"]);
 
-// Bitmask flags for compact cryptographic wire attestation (VB_ATTEST_V2)
+// Bitmask flags for compact wire telemetry envelope (VB_ATTEST_V2)
 const FLAG = Object.freeze({
   CANVAS2D_NOISE: 1 << 0,            // 1
   WEBGL_CLEAR_NOISE: 1 << 1,         // 2
@@ -22,6 +22,32 @@ const FLAG = Object.freeze({
   ENGINE_COHERENCE_LIE: 1 << 13,     // 8192
   SYNTHETIC_INTERACTION: 1 << 14,    // 16384
 });
+
+const FLAG_REASON_MAP = Object.freeze([
+  [FLAG.CANVAS2D_NOISE, "CANVAS2D_SYNTHETIC_NOISE"],
+  [FLAG.WEBGL_CLEAR_NOISE, "WEBGL_CLEAR_SYNTHETIC_NOISE"],
+  [FLAG.SILENT_AUDIO_NOISE, "SILENT_AUDIO_SYNTHETIC_NOISE"],
+  [FLAG.DOMRECT_POISONING, "DOMRECT_SUBPIXEL_POISONING"],
+  [FLAG.OS_CORE_FONT_LIE, "OS_CORE_FONT_LIE"],
+  [FLAG.WEBGL_HARDWARE_LIE, "WEBGL_HARDWARE_COHERENCE_LIE"],
+  [FLAG.WEBDRIVER_FLAG, "WEBDRIVER_FLAG"],
+  [FLAG.CDP_RUNTIME_ENABLE, "CDP_RUNTIME_ENABLE"],
+  [FLAG.AUTOMATION_GLOBAL, "AUTOMATION_GLOBAL_ARTIFACT"],
+  [FLAG.WEBDRIVER_GETTER_SPOOF, "WEBDRIVER_GETTER_SPOOFED"],
+  [FLAG.NATIVE_FN_TAMPERED, "NATIVE_FUNCTION_TAMPERED"],
+  [FLAG.WORKER_CONTRADICTION, "WORKER_REALM_CONTRADICTION"],
+  [FLAG.VIEWPORT_IMPOSSIBILITY, "VIEWPORT_GEOMETRY_IMPOSSIBILITY"],
+  [FLAG.ENGINE_COHERENCE_LIE, "ENGINE_COHERENCE_LIE"],
+  [FLAG.SYNTHETIC_INTERACTION, "SYNTHETIC_INTERACTION"],
+]);
+
+function decodeFlags(flags) {
+  const out = [];
+  for (const [bit, name] of FLAG_REASON_MAP) {
+    if ((flags & bit) !== 0) out.push(name);
+  }
+  return out;
+}
 
 function normalizeMode(mode = "strict") {
   const m = String(mode || "strict").trim().toLowerCase();
@@ -63,8 +89,8 @@ function getHeader(headers, name) {
 }
 
 /**
- * Stage 1: Evaluates all 14 empirically verified physics, graphics, audio,
- * cross-realm, prototype, geometry, and engine-coherence invariants.
+ * Stage 1: Evaluates all 14 physics, graphics, audio, cross-realm, prototype,
+ * geometry, and engine-coherence invariants.
  */
 function evaluateTelemetry(telemetry = {}, { mode = "strict", antiCdp = true } = {}) {
   const m = normalizeMode(mode);
@@ -77,49 +103,37 @@ function evaluateTelemetry(telemetry = {}, { mode = "strict", antiCdp = true } =
   let flags = 0;
   const reasons = [];
 
-  // 1. WebDriver flag (main window or untouched fresh iframe realm)
   if (antiCdp && (telemetry.webdriver || telemetry.freshIframeWebdriver)) {
     score += 4;
     flags |= FLAG.WEBDRIVER_FLAG;
     reasons.push("WEBDRIVER_FLAG");
   }
-
-  // 2. Automation global/document artifacts (cdc_*, __playwright*, __puppeteer*, domAutomation, etc.)
   if (antiCdp && telemetry.automationGlobalArtifact) {
     score += 4;
     flags |= FLAG.AUTOMATION_GLOBAL;
     reasons.push("AUTOMATION_GLOBAL_ARTIFACT");
   }
-
-  // 3. Active CDP Runtime.enable side-channel
   if (antiCdp && telemetry.cdpRuntimeEnable) {
     score += 4;
     flags |= FLAG.CDP_RUNTIME_ENABLE;
     reasons.push("CDP_RUNTIME_ENABLE");
   }
-
-  // 4. Spoofed Navigator.prototype.webdriver getter (anonymous/non-native or own-property override)
   if (telemetry.webdriverGetterSpoofed) {
     score += 4;
     flags |= FLAG.WEBDRIVER_GETTER_SPOOF;
     reasons.push("WEBDRIVER_GETTER_SPOOFED");
   }
-
-  // 5. Cross-realm native function tampering (fresh iframe Function.prototype.toString mismatch)
   if (telemetry.nativeFunctionTampered) {
     score += 4;
     flags |= FLAG.NATIVE_FN_TAMPERED;
     reasons.push("NATIVE_FUNCTION_TAMPERED");
   }
-
-  // 6. Web Worker vs Main Thread contradiction (platform, hardwareConcurrency, UA, or WebGL renderer)
   if (telemetry.workerRealmContradiction) {
     score += 4;
     flags |= FLAG.WORKER_CONTRADICTION;
     reasons.push("WORKER_REALM_CONTRADICTION");
   }
 
-  // 7. Canvas2D / OffscreenCanvas solid-fill noise or non-deterministic repeat reads
   const c2Uniq = telemetry.canvas2dUniqueColors ?? 1;
   const c2Rep = telemetry.canvas2dRepeatDiff ?? 0;
   const ocUniq = telemetry.offscreenCanvasUniqueColors ?? 1;
@@ -129,56 +143,48 @@ function evaluateTelemetry(telemetry = {}, { mode = "strict", antiCdp = true } =
     reasons.push(c2Rep > 0 ? "CANVAS2D_NON_DETERMINISTIC" : "CANVAS2D_SYNTHETIC_NOISE");
   }
 
-  // 8. WebGL gl.clear(0.5, 0.5, 0.5, 1) readPixels synthetic noise
   if ((telemetry.webglClearUniqueColors ?? 1) > 1) {
     score += 2;
     flags |= FLAG.WEBGL_CLEAR_NOISE;
     reasons.push("WEBGL_CLEAR_SYNTHETIC_NOISE");
   }
 
-  // 9. WebGL GPU-to-extension / MAX_TEXTURE_SIZE / OS hardware impossibility
-  if (telemetry.webglHardwareLie || telemetry.d3d11ExtMismatch) {
+  if (telemetry.webglHardwareLie) {
     score += 2;
     flags |= FLAG.WEBGL_HARDWARE_LIE;
     reasons.push("WEBGL_HARDWARE_COHERENCE_LIE");
   }
 
-  // 10. Silent OfflineAudioContext non-zero noise or non-deterministic oscillator render
-  if ((telemetry.silentAudioNonZeroSamples ?? 0) > 0 || (telemetry.audioOscRepeatDiff ?? 0) > 0) {
+  if ((telemetry.silentAudioNonZeroSamples ?? 0) > 0) {
     score += 2;
     flags |= FLAG.SILENT_AUDIO_NOISE;
     reasons.push("SILENT_AUDIO_SYNTHETIC_NOISE");
   }
 
-  // 11. Integer-DPR DOMRect sub-pixel poisoning
   if (telemetry.domRectSubpixelDrift) {
     score += 2;
     flags |= FLAG.DOMRECT_POISONING;
     reasons.push("DOMRECT_SUBPIXEL_POISONING");
   }
 
-  // 12. OS platform vs mandatory core system fonts contradiction
   if (telemetry.osFontLie) {
     score += 2;
     flags |= FLAG.OS_CORE_FONT_LIE;
     reasons.push("OS_CORE_FONT_LIE");
   }
 
-  // 13. Euclidean viewport/screen geometry impossibility or headless zero-chrome/no-pointer desktop
   if (telemetry.viewportGeometryImpossibility) {
     score += 2;
     flags |= FLAG.VIEWPORT_IMPOSSIBILITY;
     reasons.push("VIEWPORT_GEOMETRY_IMPOSSIBILITY");
   }
 
-  // 14. Permissions/Notification API contradiction or automated Gecko empty-plugin profile
   if (telemetry.engineCoherenceLie) {
     score += 2;
     flags |= FLAG.ENGINE_COHERENCE_LIE;
     reasons.push("ENGINE_COHERENCE_LIE");
   }
 
-  // Optional Stage 2 interaction kinematics score folded in when provided
   if (telemetry.interaction && typeof telemetry.interaction === "object") {
     const ik = evaluateInteraction(telemetry.interaction, { mode: m });
     if (ik.score > 0) {
@@ -196,7 +202,7 @@ function evaluateTelemetry(telemetry = {}, { mode = "strict", antiCdp = true } =
     flags,
     threshold,
     mode: m,
-    platform: String(telemetry.platform || "").slice(0, 48),
+    platform: String(telemetry.platform || "").replace(/\|/g, "").slice(0, 48),
     reasons,
   };
 }
@@ -204,8 +210,9 @@ function evaluateTelemetry(telemetry = {}, { mode = "strict", antiCdp = true } =
 /**
  * Stage 2: Biomechanical Interaction Kinematics Guard.
  * Catches synthetic JS clicks (`isTrusted === false`) and programmatic CDP/Juggler
- * teleport clicks (`<= 1` pointermove, sub-12ms dwell, exact geometric center hit)
- * while explicitly exempting trusted keyboard accessibility activation (`isTrusted && detail === 0`).
+ * teleport clicks (`<= 3` pointermoves, sub-12ms pointerdown->click dwell, exact center hit)
+ * while exempting trusted keyboard activation (`isTrusted && detail === 0`) and
+ * touch/pen pointer types (`pointerType === "touch" | "pen"`).
  */
 function evaluateInteraction(interaction = {}, { mode = "strict" } = {}) {
   const m = normalizeMode(mode);
@@ -216,23 +223,24 @@ function evaluateInteraction(interaction = {}, { mode = "strict" } = {}) {
 
   let score = 0;
   const reasons = [];
+  const pType = String(interaction.pointerType || "mouse").toLowerCase();
 
   if (interaction.isTrusted === false) {
     score += 6;
     reasons.push("UNTRUSTED_SYNTHETIC_CLICK");
-  } else if (interaction.isTrusted === true) {
+  } else if (interaction.isTrusted === true && pType !== "touch" && pType !== "pen") {
     const detail = Number(interaction.detail ?? 1);
     const moves = Number(interaction.pointerMoves ?? 99);
     const dwellMs = Number(interaction.dwellMs ?? 99);
     const hitCenter = Boolean(interaction.hitExactCenter);
 
-    // Exempt keyboard activation (Enter/Space on focused button -> isTrusted=true, detail=0)
+    // Exempt keyboard activation (Enter/Space on focused control -> isTrusted=true, detail=0)
     if (detail >= 1) {
-      // Programmatic CDP/Juggler pointer click: <= 3 moves AND biomechanically impossible <12ms dwell AND dead-center hit
       if (moves <= 3 && dwellMs >= 0 && dwellMs < 12 && hitCenter) {
         score += 4;
         reasons.push("TELEPORT_CLICK_PHYSICS");
-      } else if (moves === 0 && dwellMs >= 0 && dwellMs < 8) {
+      } else if (moves === 0 && dwellMs > 0 && dwellMs < 8) {
+        // Require dwellMs > 0 so coarsened 100ms privacy timers (dwellMs === 0) don't false-positive
         score += 4;
         reasons.push("ZERO_TRAJECTORY_INSTANT_CLICK");
       }
@@ -247,7 +255,9 @@ function buildAttestation({ mode = "strict", ticket = "", nonce = "", telemetry 
   const m = normalizeMode(mode);
   if (m === "off") return null;
   const ev = evaluateTelemetry(telemetry, { mode: m, antiCdp });
-  const digest = sha256Hex(`VB_ATTEST_V2|${ticket}|${nonce}|${ev.score}|${ev.flags}|${ev.platform}`);
+  const safeTicket = String(ticket || "").replace(/\|/g, "");
+  const safeNonce = String(nonce || "").replace(/\|/g, "");
+  const digest = sha256Hex(`VB_ATTEST_V2|${safeTicket}|${safeNonce}|${ev.score}|${ev.flags}|${ev.platform}`);
   return {
     v: 2,
     s: ev.score,
@@ -278,13 +288,16 @@ function verifyAttestation({
   const secChUa = getHeader(headers, "sec-ch-ua");
   const secChPlat = getHeader(headers, "sec-ch-ua-platform").replace(/"/g, "").toLowerCase();
 
-  // 1. Headless / automation User-Agent or Sec-CH-UA check (strict)
-  if (m === "strict" && (/HeadlessChrome|Playwright|Puppeteer|PhantomJS|SlimerJS/i.test(ua) || /HeadlessChrome/i.test(secChUa))) {
+  // 1. Headless / automation User-Agent or Sec-CH-UA check (enforced in BOTH strict & balanced!)
+  if (
+    (m === "strict" || m === "balanced") &&
+    (/HeadlessChrome|Playwright|Puppeteer|PhantomJS|SlimerJS/i.test(ua) || /HeadlessChrome/i.test(secChUa))
+  ) {
     reasons.push("AUTOMATION_UA_DENIED");
     score += 6;
   }
 
-  // 2. OS header contradiction check (Linux UA + Windows Client Hint, etc.)
+  // 2. OS header contradiction check
   const uaLinux = ua.includes("Linux") && !ua.includes("Android");
   const uaWin = ua.includes("Windows NT");
   const uaMac = ua.includes("Macintosh");
@@ -299,39 +312,80 @@ function verifyAttestation({
     }
   }
 
-  // 3. Legacy GREASE / Chrome version contradiction (e.g. Chrome/120+ sending legacy ' Not A;Brand";v="99')
+  // 3. Legacy GREASE / Chrome version contradiction
   const chromeVerMatch = ua.match(/Chrome\/(\d+)/);
   if (chromeVerMatch && Number(chromeVerMatch[1]) >= 115 && secChUa.includes('" Not A;Brand";v="99"')) {
     reasons.push("SEC_CH_UA_GREASE_LIE");
     score += 2;
   }
 
-  // 4. Cryptographic hardware attestation check (VB_ATTEST_V2)
-  if (!attest || typeof attest !== "object") {
-    if (m === "strict") {
+  // 4. Parse & strictly validate VB_ATTEST_V2 telemetry envelope (matches Python verifier parity)
+  let attObj = attest;
+  if (typeof attObj === "string") {
+    const trimmed = attObj.trim();
+    if (!trimmed) {
+      attObj = null;
+    } else {
+      try {
+        attObj = JSON.parse(trimmed);
+      } catch {
+        attObj = { invalid: true };
+      }
+    }
+  }
+
+  const tkStr = String(ticket ?? "");
+  const nnStr = String(nonce ?? "");
+
+  if (attObj === null || attObj === undefined) {
+    if (m === "strict" || m === "balanced") {
       reasons.push("ATTEST_REQUIRED");
       score += 6;
     }
+  } else if (typeof attObj !== "object" || Array.isArray(attObj)) {
+    reasons.push("ATTEST_INVALID");
+    score += 6;
   } else {
-    const s = Number(attest.s);
-    const f = Number(attest.f);
-    const p = String(attest.p || "").slice(0, 48);
-    const d = String(attest.d || "");
+    const v = attObj.v;
+    const s = attObj.s;
+    const f = attObj.f;
+    const pRaw = attObj.p === null || attObj.p === undefined ? "" : String(attObj.p);
+    const p = pRaw.slice(0, 48);
+    const d = typeof attObj.d === "string" ? attObj.d : "";
 
-    if (!Number.isInteger(s) || s < 0 || !Number.isInteger(f) || f < 0 || d.length !== 64) {
+    const validNums =
+      (v === undefined || v === 2) &&
+      typeof s === "number" &&
+      Number.isInteger(s) &&
+      s >= 0 &&
+      s <= 10_000 &&
+      typeof f === "number" &&
+      Number.isInteger(f) &&
+      f >= 0 &&
+      f <= 0xfffff;
+    const validDelims = !tkStr.includes("|") && !nnStr.includes("|") && !p.includes("|");
+    const validHexDigest = /^[0-9a-f]{64}$/i.test(d);
+    const coherentFlagScore = !(f > 0 && s === 0);
+
+    if (!validNums || !validDelims || !validHexDigest || !coherentFlagScore) {
       reasons.push("ATTEST_INVALID");
       score += 6;
     } else {
-      const expectedV2 = sha256Hex(`VB_ATTEST_V2|${ticket}|${nonce}|${s}|${f}|${p}`);
-      if (!safeEqualHex(d, expectedV2)) {
+      const expectedV2 = sha256Hex(`VB_ATTEST_V2|${tkStr}|${nnStr}|${s}|${f}|${p}`);
+      if (!safeEqualHex(d.toLowerCase(), expectedV2)) {
         reasons.push("ATTEST_DIGEST_MISMATCH");
         score += 6;
       }
       score += s;
+      const decoded = decodeFlags(f);
+      if (decoded.length > 0) {
+        for (const r of decoded) {
+          if (!reasons.includes(r)) reasons.push(r);
+        }
+      }
       if (s >= threshold) {
         reasons.push("BROWSER_INVARIANTS_FAILED");
       }
-      // Cross-check reported navigator.platform vs HTTP UA
       if (
         (uaLinux && (p.startsWith("Win") || p === "MacIntel")) ||
         (uaWin && (p.startsWith("Linux") || p === "MacIntel")) ||
@@ -361,6 +415,7 @@ function verifyAttestation({
 
 module.exports = {
   FLAG,
+  decodeFlags,
   normalizeMode,
   thresholdForMode,
   evaluateTelemetry,
