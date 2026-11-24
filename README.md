@@ -20,7 +20,13 @@
   <a href="LICENSE"><img src="assets/badges/license.svg" alt="license: MIT" /></a>
 </p>
 
-**VeilBreak** is a zero-dependency browser integrity SDK, `<veil-break>` Shadow DOM Web Component, reverse-proxy middleware, and Python verifier that detects and blocks **automated, CDP-patched, JS-spoofed, and C++-patched anti-detect browsers across both Chromium and Gecko engines** — using 14 hardware, graphics, cross-realm, and geometric physics invariants plus biomechanical click kinematics, with **0% false positives on clean desktop Chrome and Firefox**.
+**VeilBreak** is a zero-dependency browser integrity SDK, `<veil-break>` Shadow DOM Web Component, reverse-proxy middleware, and Python verifier for blocking automated, CDP-patched, JS-spoofed, and C++-patched anti-detect browsers across both Chromium and Gecko engines.
+
+## Problem & Solution
+
+**Problem:** Modern stealth browsers, CDP-patched automation forks, and JS evasion plugins strip `navigator.webdriver`, silence `Runtime.enable` traps, and forge User-Agent and GPU strings directly inside C++ or injected wrappers. Naive bot detectors either miss them entirely or trigger false positives on genuine desktop Chrome and Firefox users.
+
+**Solution:** VeilBreak verifies properties stealth frameworks struggle to fake consistently across layers: 14 cross-engine graphics, audio, font, Euclidean viewport, fresh-`iframe`, and `Web Worker` physics invariants paired with Stage-2 biomechanical click kinematics and single-use SHA-256 server tickets (`VB_ATTEST_V2`). In live 19-browser testing, clean desktop Chrome and Firefox pass with `0%` false positives while automated and stealth frameworks are blocked end-to-end.
 
 ## Features
 
