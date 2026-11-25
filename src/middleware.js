@@ -21,14 +21,29 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade",
 ]);
 
-function stripHopByHop(headers) {
+const PROTECTED_FROM_CONN_STRIP = new Set([
+  "host",
+  "authorization",
+  "cookie",
+  "forwarded",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "x-real-ip",
+  "cf-connecting-ip",
+  "true-client-ip",
+]);
+
+function stripHopByHop(headers, { isRequest = false } = {}) {
   const out = {};
   const connTokens = new Set();
   const connVal = headers?.connection;
-  if (typeof connVal === "string") {
+  if (!isRequest && typeof connVal === "string") {
     for (const tok of connVal.split(",")) {
       const t = tok.trim().toLowerCase();
-      if (t) connTokens.add(t);
+      if (t && !PROTECTED_FROM_CONN_STRIP.has(t) && !t.startsWith("x-auth-") && !t.startsWith("cf-")) {
+        connTokens.add(t);
+      }
     }
   }
   for (const [k, v] of Object.entries(headers || {})) {
@@ -43,27 +58,63 @@ function escapeHtmlAttr(s) {
   return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function normalizePathname(rawUrl) {
+function decodePercentLenient(s) {
+  // Decode valid ASCII/UTF-8 percent escapes without letting invalid %ff poison adjacent runs (CRIT-2)
+  return s.replace(/(?:%[0-9a-fA-F]{2})+/g, (run) => {
+    let out = "";
+    let i = 0;
+    while (i < run.length) {
+      const b = parseInt(run.slice(i + 1, i + 3), 16);
+      if (b >= 0x01 && b <= 0x7f) {
+        out += String.fromCharCode(b);
+        i += 3;
+        continue;
+      }
+      let matched = false;
+      for (const n of [2, 3, 4]) {
+        if (i + n * 3 <= run.length) {
+          const sub = run.slice(i, i + n * 3);
+          try {
+            out += decodeURIComponent(sub);
+            i += n * 3;
+            matched = true;
+            break;
+          } catch {}
+        }
+      }
+      if (!matched) {
+        out += run.slice(i, i + 3);
+        i += 3;
+      }
+    }
+    return out;
+  });
+}
+
+function stripSchemeAndAuthority(rawUrl) {
   let s = String(rawUrl || "/").trim();
   if (/^https?:\/\//i.test(s)) {
-    try {
-      s = new URL(s).pathname || "/";
-    } catch {
-      const idx = s.indexOf("/", s.indexOf("://") + 3);
-      s = idx >= 0 ? s.slice(idx) : "/";
-    }
+    const afterScheme = s.indexOf("://") + 3;
+    const slashIdx = s.indexOf("/", afterScheme);
+    const qIdx = s.indexOf("?", afterScheme);
+    const hIdx = s.indexOf("#", afterScheme);
+    const cuts = [slashIdx, qIdx, hIdx].filter((i) => i >= 0);
+    if (cuts.length === 0) return "/";
+    const first = Math.min(...cuts);
+    s = s[first] === "/" ? s.slice(first) : "/" + s.slice(first);
   }
-  const qIdx = s.search(/[?#]/);
+  return s;
+}
+
+function normalizePathname(rawUrl) {
+  let s = stripSchemeAndAuthority(rawUrl);
+  const qIdx = s.indexOf("?");
   if (qIdx >= 0) s = s.slice(0, qIdx);
   if (!s) return "/";
   for (let pass = 0; pass < 2; pass++) {
-    try {
-      const dec = decodeURIComponent(s);
-      if (dec === s) break;
-      s = dec;
-    } catch {
-      break;
-    }
+    const dec = decodePercentLenient(s);
+    if (dec === s) break;
+    s = dec;
   }
   s = s.replace(/\\/g, "/");
   if (!s.startsWith("/")) s = "/" + s;
@@ -74,6 +125,32 @@ function normalizePathname(rawUrl) {
   s = path.posix.normalize(s);
   if (!s.startsWith("/")) s = "/" + s;
   return s;
+}
+
+function expandPathCandidates(rawUrl) {
+  const raw = stripSchemeAndAuthority(rawUrl);
+  const qIdx = raw.indexOf("?");
+  const rawPath = qIdx >= 0 ? raw.slice(0, qIdx) : raw;
+  const set = new Set();
+  set.add(normalizePathname(rawPath));
+
+  const rawHash = rawPath.indexOf("#");
+  if (rawHash >= 0) {
+    set.add(normalizePathname(rawPath.slice(0, rawHash)));
+  }
+
+  let dec = rawPath;
+  for (let pass = 0; pass < 2; pass++) {
+    const next = decodePercentLenient(dec);
+    if (next === dec) break;
+    dec = next;
+  }
+  const decQ = dec.indexOf("?");
+  if (decQ >= 0) set.add(normalizePathname(dec.slice(0, decQ)));
+  const decH = dec.indexOf("#");
+  if (decH >= 0) set.add(normalizePathname(dec.slice(0, decH)));
+
+  return Array.from(set);
 }
 
 function sendJson(res, status, obj) {
@@ -87,22 +164,25 @@ function sendJson(res, status, obj) {
   res.end(payload);
 }
 
-function isProtectedPath(rawPathname, protectedPaths) {
-  const norm = normalizePathname(rawPathname);
-  const normLower = norm.toLowerCase();
-  for (const rule of protectedPaths) {
-    if (rule instanceof RegExp) {
-      rule.lastIndex = 0;
-      if (rule.test(norm)) return true;
-    } else {
-      const rNorm = normalizePathname(String(rule)).toLowerCase();
-      if (
-        rNorm === "*" ||
-        rNorm === "/" ||
-        normLower === rNorm ||
-        normLower.startsWith(rNorm.endsWith("/") ? rNorm : `${rNorm}/`)
-      ) {
-        return true;
+function isProtectedPath(rawUrl, protectedPaths) {
+  const candidates = expandPathCandidates(rawUrl);
+  for (const norm of candidates) {
+    const normLower = norm.toLowerCase();
+    for (const rule of protectedPaths) {
+      if (rule instanceof RegExp) {
+        rule.lastIndex = 0;
+        if (rule.test(norm)) return true;
+      } else {
+        const rawRule = String(rule).trim();
+        if (rawRule === "*") return true;
+        const rNorm = normalizePathname(rawRule).toLowerCase();
+        if (
+          rNorm === "/" ||
+          normLower === rNorm ||
+          normLower.startsWith(rNorm.endsWith("/") ? rNorm : `${rNorm}/`)
+        ) {
+          return true;
+        }
       }
     }
   }
@@ -110,15 +190,147 @@ function isProtectedPath(rawPathname, protectedPaths) {
 }
 
 function serializeRulesForClient(protectedPaths) {
-  return protectedPaths.map((p) =>
-    p instanceof RegExp ? { regex: p.source, flags: p.flags.replace(/[gy]/g, "") } : normalizePathname(String(p))
-  );
+  return protectedPaths.map((p) => {
+    if (p instanceof RegExp) return { regex: p.source, flags: p.flags.replace(/[gy]/g, "") };
+    const raw = String(p).trim();
+    return raw === "*" ? "*" : normalizePathname(raw);
+  });
 }
 
 function isAutomationUa(headers) {
   const ua = String(headers?.["user-agent"] || "");
   const ch = String(headers?.["sec-ch-ua"] || "");
   return /HeadlessChrome|Playwright|Puppeteer|PhantomJS|SlimerJS/i.test(ua) || /HeadlessChrome/i.test(ch);
+}
+
+function normalizeIp(ip) {
+  const s = String(ip || "").trim().toLowerCase().replace(/^::ffff:/, "");
+  return s === "::1" ? "127.0.0.1" : s;
+}
+
+function parseIpv4Int(ip) {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return null;
+  let n = 0;
+  for (const p of parts) {
+    if (!/^\d{1,3}$/.test(p)) return null;
+    const v = Number(p);
+    if (v < 0 || v > 255) return null;
+    n = (n << 8) | v;
+  }
+  return n >>> 0;
+}
+
+function parseIpv6BigInt(ip) {
+  let s = String(ip || "").trim().toLowerCase();
+  if (!s.includes(":")) return null;
+  const lastColon = s.lastIndexOf(":");
+  if (lastColon >= 0 && s.slice(lastColon + 1).includes(".")) {
+    const v4 = parseIpv4Int(s.slice(lastColon + 1));
+    if (v4 === null) return null;
+    const hi = ((v4 >>> 16) & 0xffff).toString(16);
+    const lo = (v4 & 0xffff).toString(16);
+    s = `${s.slice(0, lastColon + 1)}${hi}:${lo}`;
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - (left.length + right.length);
+  if (halves.length === 1 && missing !== 0) return null;
+  if (halves.length === 2 && missing < 0) return null;
+  const groups = [...left, ...Array(Math.max(0, missing)).fill("0"), ...right];
+  if (groups.length !== 8) return null;
+  let acc = 0n;
+  for (const g of groups) {
+    if (!/^[0-9a-f]{1,4}$/i.test(g)) return null;
+    acc = (acc << 16n) | BigInt(parseInt(g, 16));
+  }
+  return acc;
+}
+
+function compileTrustedProxies(spec) {
+  const rawList = Array.isArray(spec)
+    ? spec
+    : typeof spec === "string"
+      ? spec.split(",")
+      : [];
+  const exact = new Set();
+  const cidrsV4 = [];
+  const cidrsV6 = [];
+  for (const item of rawList) {
+    const entry = String(item || "").trim().toLowerCase();
+    if (!entry) continue;
+    const slash = entry.indexOf("/");
+    if (slash > 0) {
+      const baseRaw = entry.slice(0, slash);
+      const bitsStr = entry.slice(slash + 1);
+      if (!/^\d{1,3}$/.test(bitsStr)) continue;
+      const bits = Number(bitsStr);
+      const baseV6 = parseIpv6BigInt(baseRaw);
+      if (baseV6 !== null && bits >= 0 && bits <= 128) {
+        const mask = bits === 0 ? 0n : (((1n << BigInt(bits)) - 1n) << BigInt(128 - bits));
+        cidrsV6.push({ net: baseV6 & mask, mask });
+        continue;
+      }
+      const baseInt = parseIpv4Int(baseRaw);
+      if (baseInt !== null && bits >= 0 && bits <= 32) {
+        const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+        cidrsV4.push({ net: (baseInt & mask) >>> 0, mask });
+        continue;
+      }
+      continue;
+    }
+    const rawV6 = parseIpv6BigInt(entry);
+    if (rawV6 !== null) exact.add(`v6:${rawV6.toString(16)}`);
+    exact.add(normalizeIp(entry));
+  }
+  return {
+    size: exact.size + cidrsV4.length + cidrsV6.length,
+    has(ip) {
+      const raw = String(ip || "").trim().toLowerCase();
+      const norm = normalizeIp(raw);
+      if (exact.has(norm)) return true;
+      const rawV6 = parseIpv6BigInt(raw);
+      if (rawV6 !== null) {
+        if (exact.has(`v6:${rawV6.toString(16)}`)) return true;
+        for (const c of cidrsV6) {
+          if ((rawV6 & c.mask) === c.net) return true;
+        }
+      }
+      const v4 = parseIpv4Int(norm);
+      if (v4 !== null) {
+        for (const c of cidrsV4) {
+          if (((v4 & c.mask) >>> 0) === c.net) return true;
+        }
+        if (cidrsV6.length > 0) {
+          const mappedV6 = (0xffffn << 32n) | BigInt(v4);
+          for (const c of cidrsV6) {
+            if ((mappedV6 & c.mask) === c.net) return true;
+          }
+        }
+      }
+      return false;
+    },
+  };
+}
+
+function resolveClientIp(req, trustedProxies) {
+  const remoteRaw = String(req?.socket?.remoteAddress || req?.ip || "").trim();
+  // Pass RAW IP (preserving ::1 / ::ffff:...) to trustedProxies.has() before normalizing return value (Loop 4 MED-9)
+  if (remoteRaw && trustedProxies.size > 0 && trustedProxies.has(remoteRaw)) {
+    const xff = String(req?.headers?.["x-forwarded-for"] || "");
+    if (xff) {
+      const rawParts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+      for (let i = rawParts.length - 1; i >= 0; i--) {
+        if (!trustedProxies.has(rawParts[i])) {
+          return normalizeIp(rawParts[i]);
+        }
+      }
+      if (rawParts.length > 0) return normalizeIp(rawParts[0]);
+    }
+  }
+  return normalizeIp(remoteRaw) || "unknown";
 }
 
 function createVeilBreakMiddleware(options = {}) {
@@ -136,6 +348,7 @@ function createVeilBreakMiddleware(options = {}) {
   const autoBlockPage = options.autoBlockPage !== false;
   const enablePlayground = options.enablePlayground !== false;
   const exposeDebugHeaders = options.exposeDebugHeaders !== false;
+  const trustedProxies = compileTrustedProxies(options.trustProxy);
   const onDetect = typeof options.onDetect === "function" ? options.onDetect : null;
 
   const tickets = new Map();
@@ -150,8 +363,24 @@ function createVeilBreakMiddleware(options = {}) {
 
   function allowTicketMint(ip, now) {
     const key = ip || "unknown";
-    if (ticketRates.size > 10_000) ticketRates.clear();
+    // Bounded expired-first LRU cleanup — never call `.clear()` wiping active rate buckets (MED-08)
+    if (ticketRates.size > 10_000) {
+      for (const [k, arr] of ticketRates) {
+        const fresh = arr.filter((t) => now - t < 60_000);
+        if (fresh.length === 0) ticketRates.delete(k);
+      }
+      if (ticketRates.size > 10_000) {
+        const drop = ticketRates.size - 8_500;
+        let i = 0;
+        for (const k of ticketRates.keys()) {
+          ticketRates.delete(k);
+          if (++i >= drop) break;
+        }
+      }
+    }
     const arr = (ticketRates.get(key) || []).filter((t) => now - t < 60_000);
+    // Refresh Map order (delete + set) for true LRU so actively rate-limited IPs are NEVER evicted first (MED-20)
+    ticketRates.delete(key);
     if (arr.length >= maxTicketsPerMinPerIp) {
       ticketRates.set(key, arr);
       return false;
@@ -164,16 +393,12 @@ function createVeilBreakMiddleware(options = {}) {
   function mintTicket() {
     const now = Date.now();
     if (tickets.size >= maxTickets) {
-      // First evict ONLY expired tickets so active users aren't kicked out
+      // Evict ONLY expired tickets; refuse minting at capacity rather than kicking live users (MED-08)
       for (const [k, exp] of tickets) {
         if (exp <= now) tickets.delete(k);
       }
       if (tickets.size >= maxTickets) {
-        const target = Math.floor(maxTickets * 0.85);
-        for (const k of tickets.keys()) {
-          tickets.delete(k);
-          if (tickets.size <= target) break;
-        }
+        return null;
       }
     }
     const tk = crypto.randomBytes(16).toString("hex");
@@ -220,17 +445,27 @@ function createVeilBreakMiddleware(options = {}) {
       return true;
     }
 
-    if (req.method === "GET" && pathname === `${basePath}/ticket`) {
+    if ((req.method === "GET" || req.method === "POST") && pathname === `${basePath}/ticket`) {
+      const sfs = String(req.headers["sec-fetch-site"] || "").toLowerCase();
+      if (sfs.includes("cross-site")) {
+        sendJson(res, 403, { ok: false, error: "CROSS_SITE_TICKET_DENIED" });
+        return true;
+      }
       if ((mode === "strict" || mode === "balanced") && isAutomationUa(req.headers)) {
         sendJson(res, 403, { ok: false, error: "VEILBREAK_DENIED", reasons: ["AUTOMATION_UA_DENIED"] });
         return true;
       }
-      const remoteIp = String(req.socket?.remoteAddress || "").replace(/^::ffff:/, "");
+      const remoteIp = resolveClientIp(req, trustedProxies);
       if (!allowTicketMint(remoteIp, Date.now())) {
         sendJson(res, 429, { ok: false, error: "TICKET_RATE_LIMITED" });
         return true;
       }
-      sendJson(res, 200, { ok: true, ticket: mintTicket(), mode });
+      const tk = mintTicket();
+      if (!tk) {
+        sendJson(res, 503, { ok: false, error: "TICKET_CAPACITY_EXCEEDED" });
+        return true;
+      }
+      sendJson(res, 200, { ok: true, ticket: tk, mode });
       return true;
     }
 
@@ -245,7 +480,8 @@ function createVeilBreakMiddleware(options = {}) {
       return false;
     }
 
-    if (!isProtectedPath(pathname, protectedPaths)) {
+    // Pass RAW urlStr so pre-hash & decoded-%3F/%23 bypasses are caught (Loop 3 CRIT-3 & HIGH-7)
+    if (!isProtectedPath(urlStr, protectedPaths)) {
       if ((mode === "strict" || mode === "balanced") && isAutomationUa(req.headers)) {
         const verdict = { ok: false, blocked: true, score: 6, threshold: mode === "strict" ? 2 : 4, mode, reasons: ["AUTOMATION_UA_DENIED"] };
         if (exposeDebugHeaders) {
@@ -324,12 +560,13 @@ function createVeilBreakMiddleware(options = {}) {
   return handle;
 }
 
-function decodeHtmlBody(rawBuf, contentEncoding) {
+function decodeHtmlBody(rawBuf, contentEncoding, maxOutputLength = 5 * 1024 * 1024) {
   const enc = String(contentEncoding || "").trim().toLowerCase();
   if (!enc || enc === "identity") return rawBuf;
-  if (enc === "gzip") return zlib.gunzipSync(rawBuf);
-  if (enc === "deflate") return zlib.inflateSync(rawBuf);
-  if (enc === "br") return zlib.brotliDecompressSync(rawBuf);
+  const opts = { maxOutputLength };
+  if (enc === "gzip") return zlib.gunzipSync(rawBuf, opts);
+  if (enc === "deflate") return zlib.inflateSync(rawBuf, opts);
+  if (enc === "br") return zlib.brotliDecompressSync(rawBuf, opts);
   return null;
 }
 
@@ -337,7 +574,9 @@ function injectGateIntoHtml(html, basePath, mode, autoBlockPage) {
   const safeSrc = escapeHtmlAttr(`${basePath}/gate.js`);
   const blockAttr = autoBlockPage === false ? "false" : "true";
   const tag = `<script src="${safeSrc}" data-mode="${escapeHtmlAttr(mode)}" data-block-page="${blockAttr}"></script>`;
-  if (html.includes(`${basePath}/gate.js`)) return html;
+  if (new RegExp(`<script\\b[^>]*\\bsrc=["']${safeSrc.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`, "i").test(html)) {
+    return html;
+  }
   if (/<head(?:\s[^>]*)?>/i.test(html)) {
     return html.replace(/<head(?:\s[^>]*)?>/i, (m) => `${m}${tag}`);
   }
@@ -348,6 +587,13 @@ function injectGateIntoHtml(html, basePath, mode, autoBlockPage) {
     return html.replace(/<body(?:\s[^>]*)?>/i, (m) => `${m}${tag}`);
   }
   return `${tag}${html}`;
+}
+
+function encodeForwardPathname(normPath) {
+  return normPath
+    .split("/")
+    .map((seg) => encodeURIComponent(seg))
+    .join("/");
 }
 
 function createVeilBreakServer(options = {}) {
@@ -369,21 +615,24 @@ function createVeilBreakServer(options = {}) {
       .then((handled) => {
         if (handled) return;
 
-        let fwdPath = req.url || "/";
-        if (/^https?:\/\//i.test(fwdPath)) {
-          try {
-            const parsed = new URL(fwdPath);
-            fwdPath = `${parsed.pathname}${parsed.search}`;
-          } catch {
-            fwdPath = "/";
-          }
+        // Reuse exact stripSchemeAndAuthority so `http://host?x=/api/secret` NEVER desyncs (Loop 4 CRIT-2)
+        // and encode only unescaped non-RFC3986 bytes in query so valid %20/%3A are NEVER double-encoded (Loop 4 HIGH-5)
+        let rawFwd = stripSchemeAndAuthority(req.url || "/");
+        let fwdSearch = "";
+        const qIdx = rawFwd.indexOf("?");
+        if (qIdx >= 0) {
+          fwdSearch = rawFwd.slice(qIdx);
+          rawFwd = rawFwd.slice(0, qIdx);
         }
-        if (!fwdPath.startsWith("/")) fwdPath = "/" + fwdPath;
+        const safeSearch = fwdSearch
+          ? fwdSearch.replace(/[^A-Za-z0-9\-._~!$&'()*+,;=:@/?%]|%(?![0-9a-fA-F]{2})/g, (ch) => encodeURIComponent(ch))
+          : "";
+        let fwdPath = `${encodeForwardPathname(normalizePathname(rawFwd))}${safeSearch}`;
         if (baseTargetPath) fwdPath = `${baseTargetPath}${fwdPath}`;
 
-        const fwdHeaders = stripHopByHop(req.headers);
+        const fwdHeaders = stripHopByHop(req.headers, { isRequest: true });
         fwdHeaders.host = targetUrl.host;
-        const remoteIp = String(req.socket?.remoteAddress || "").replace(/^::ffff:/, "");
+        const remoteIp = normalizeIp(req.socket?.remoteAddress || "");
         if (remoteIp) {
           fwdHeaders["x-forwarded-for"] = fwdHeaders["x-forwarded-for"]
             ? `${fwdHeaders["x-forwarded-for"]}, ${remoteIp}`
@@ -445,7 +694,7 @@ function createVeilBreakServer(options = {}) {
                 let decoded = rawBuf;
                 if (ce) {
                   try {
-                    const maybe = decodeHtmlBody(rawBuf, ce);
+                    const maybe = decodeHtmlBody(rawBuf, ce, maxHtmlBytes);
                     if (!maybe) {
                       res.writeHead(statusCode, outHeaders);
                       res.end(rawBuf);

@@ -32,6 +32,13 @@ FLAG_REASON_MAP: tuple[tuple[int, str], ...] = (
     (1 << 14, "SYNTHETIC_INTERACTION"),
 )
 
+_DEFINED_FLAG_MASK = 0x7FFF
+_FLAG_MIN_WEIGHTS: tuple[int, ...] = (2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 4)
+
+
+def _min_score_for_flags(flags: int) -> int:
+    return sum(w for i, w in enumerate(_FLAG_MIN_WEIGHTS) if (flags & (1 << i)) != 0)
+
 
 def decode_flags(flags: int) -> list[str]:
     return [name for bit, name in FLAG_REASON_MAP if (flags & bit) != 0]
@@ -45,6 +52,13 @@ class VeilBreakVerdict:
     threshold: int | float
     mode: str
     reasons: list[str] = field(default_factory=list)
+
+
+def _normalize_mode(mode: str | None) -> str:
+    m = str("strict" if mode is None else mode).strip().lower()
+    if m not in ("off", "monitor", "observe", "balanced", "strict"):
+        raise ValueError(f"Unsupported VeilBreak mode: {mode}")
+    return "monitor" if m == "observe" else m
 
 
 def _normalize_headers(headers: dict | None) -> dict[str, str]:
@@ -70,9 +84,7 @@ def verify_attestation(
     ticket: str = "",
     nonce: str = "",
 ) -> VeilBreakVerdict:
-    m = str(mode or "strict").strip().lower()
-    if m not in ("off", "monitor", "balanced", "strict"):
-        raise ValueError(f"Unsupported VeilBreak mode: {mode}")
+    m = _normalize_mode(mode)
     threshold: int | float = 2 if m == "strict" else (4 if m == "balanced" else math.inf)
     if m == "off":
         return VeilBreakVerdict(True, False, 0, threshold, m)
@@ -130,6 +142,7 @@ def verify_attestation(
         reasons.append("ATTEST_INVALID")
         score += 6
     else:
+        has_v = "v" in att_obj
         v = att_obj.get("v")
         s = att_obj.get("s")
         f = att_obj.get("f")
@@ -137,18 +150,19 @@ def verify_attestation(
         p = ("" if p_raw is None else str(p_raw))[:48]
         d = att_obj.get("d") if isinstance(att_obj.get("d"), str) else ""
 
+        valid_v = (not has_v) or (isinstance(v, int) and not isinstance(v, bool) and v == 2)
         valid_nums = (
-            (v is None or (isinstance(v, int) and not isinstance(v, bool) and v == 2))
+            valid_v
             and isinstance(s, int)
             and not isinstance(s, bool)
             and 0 <= s <= 10_000
             and isinstance(f, int)
             and not isinstance(f, bool)
-            and 0 <= f <= 0xFFFFF
+            and 0 <= f <= _DEFINED_FLAG_MASK
         )
         valid_delims = ("|" not in tk_str) and ("|" not in nn_str) and ("|" not in p)
         valid_hex = bool(re.fullmatch(r"[0-9a-fA-F]{64}", d))
-        coherent_flag_score = not (f > 0 and s == 0)
+        coherent_flag_score = valid_nums and (s >= _min_score_for_flags(f))
 
         if not (valid_nums and valid_delims and valid_hex and coherent_flag_score):
             reasons.append("ATTEST_INVALID")
@@ -187,25 +201,24 @@ class VeilBreakTicketStore:
     """
 
     def __init__(self, *, mode: str = "strict", ticket_ttl_ms: int = 60_000, max_tickets: int = 30_000) -> None:
-        self.mode = str(mode or "strict").strip().lower()
-        if self.mode not in ("off", "monitor", "balanced", "strict"):
-            raise ValueError(f"Unsupported VeilBreak mode: {mode}")
+        self.mode = _normalize_mode(mode)
+        if not isinstance(ticket_ttl_ms, (int, float)) or isinstance(ticket_ttl_ms, bool) or ticket_ttl_ms <= 0:
+            raise ValueError("ticket_ttl_ms must be a positive number")
+        if not isinstance(max_tickets, int) or isinstance(max_tickets, bool) or max_tickets < 1:
+            raise ValueError("max_tickets must be a positive integer")
         self.ticket_ttl_ms = ticket_ttl_ms
         self.max_tickets = max_tickets
         self._tickets: dict[str, float] = {}
 
-    def mint_ticket(self) -> str:
+    def mint_ticket(self) -> str | None:
         now = time.time() * 1000.0
         if len(self._tickets) >= self.max_tickets:
             expired = [k for k, exp in self._tickets.items() if exp <= now]
             for k in expired:
                 self._tickets.pop(k, None)
+            # Refuse minting at capacity instead of evicting live active tickets (MED-22)
             if len(self._tickets) >= self.max_tickets:
-                target = int(self.max_tickets * 0.85)
-                for k in list(self._tickets.keys()):
-                    self._tickets.pop(k, None)
-                    if len(self._tickets) <= target:
-                        break
+                return None
         tk = secrets.token_hex(16)
         self._tickets[tk] = now + float(self.ticket_ttl_ms)
         return tk

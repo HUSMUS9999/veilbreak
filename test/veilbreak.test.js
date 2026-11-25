@@ -300,3 +300,197 @@ test("7. Natural-language compiler slash/negation fixes & browser SDK syntax che
   const js = buildBrowserGateScript({ protectedRules: ["/api", { regex: "^/v\\d+/data", flags: "i" }] });
   new Function(js);
 });
+
+test("8. v2 CIDR trustProxy per-client ticket rate limiting, observe alias, and modular subpath exports", async () => {
+  const { createVeilBreakMiddleware } = require("../src/middleware.js");
+  const { normalizeMode } = require("../src/probes.js");
+  assert.equal(normalizeMode("observe"), "monitor");
+
+  const mw = createVeilBreakMiddleware({
+    mode: "observe",
+    trustProxy: ["10.0.0.0/8", "127.0.0.1"],
+    maxTicketsPerMinPerIp: 2,
+  });
+
+  function callTicket(xff) {
+    return new Promise((resolve) => {
+      let status = 200;
+      const req = {
+        method: "GET",
+        url: "/__veilbreak/ticket",
+        socket: { remoteAddress: "10.5.0.2" },
+        headers: { "user-agent": "Mozilla/5.0 Chrome/130.0", "x-forwarded-for": xff },
+      };
+      const res = {
+        headersSent: false,
+        writableEnded: false,
+        writeHead(code) { status = code; this.headersSent = true; },
+        end(body) { this.writableEnded = true; resolve({ status, body: JSON.parse(String(body)) }); },
+      };
+      mw(req, res);
+    });
+  }
+
+  // Client A uses its 2-ticket budget cleanly
+  assert.equal((await callTicket("198.51.100.10")).status, 200);
+  assert.equal((await callTicket("198.51.100.10")).status, 200);
+  assert.equal((await callTicket("198.51.100.10")).status, 429);
+
+  // Client B behind the SAME reverse proxy IP 10.5.0.2 MUST NOT be blocked by Client A's bucket!
+  assert.equal((await callTicket("198.51.100.22")).status, 200);
+
+  const pkg = require("../package.json");
+  assert.equal(pkg.exports["./probes"], "./src/probes.js");
+  assert.equal(pkg.exports["./middleware"], "./src/middleware.js");
+  assert.equal(pkg.exports["."].types, "./src/index.d.ts");
+  assert.ok(pkg.files.includes("python/"));
+});
+
+test("9. Loop 2 security regressions: ['*'] wildcard, #/%ff bypasses, cross-site /ticket, IPv6 CIDR, Connection strip", async () => {
+  const { createVeilBreakMiddleware, createVeilBreakServer, normalizePathname } = require("../src/index.js");
+  assert.equal(normalizePathname("/%61pi/%ff/data"), "/api/%ff/data");
+  assert.equal(normalizePathname("/%ff%2f../api/secret"), "/api/secret");
+  assert.equal(normalizePathname("/x#/../api/secret"), "/api/secret");
+
+  // Loop 3 LOW-20: incoherent low score for high-weight flag & undefined bits rejected in both JS & Python
+  const badFlagRes = verifyAttestation({
+    mode: "strict",
+    headers: { "user-agent": "Mozilla/5.0 Chrome/130.0" },
+    attest: { v: 2, s: 1, f: 64, p: "Linux", d: "a".repeat(64) },
+    ticket: "t1",
+    nonce: "n1",
+  });
+  assert.equal(badFlagRes.blocked, true);
+  assert.ok(badFlagRes.reasons.includes("ATTEST_INVALID"));
+
+  const pyL3 = execFileSync(
+    "python3",
+    [
+      "-c",
+      `import sys; sys.path.insert(0, ${JSON.stringify(path.join(__dirname, "..", "python"))});
+from veilbreak import verify_attestation, VeilBreakTicketStore
+r1 = verify_attestation(mode="strict", headers={"User-Agent": "Mozilla/5.0 Chrome/130.0"}, attest={"v": 2, "s": 1, "f": 64, "p": "Linux", "d": "a"*64}, ticket="t1", nonce="n1")
+assert r1.blocked and "ATTEST_INVALID" in r1.reasons
+r2 = verify_attestation(mode="strict", headers={"User-Agent": "Mozilla/5.0 Chrome/130.0"}, attest={"v": None, "s": 0, "f": 0, "p": "Linux", "d": "a"*64}, ticket="t1", nonce="n1")
+assert r2.blocked and "ATTEST_INVALID" in r2.reasons
+st = VeilBreakTicketStore(mode="observe", max_tickets=1)
+assert st.mode == "monitor"
+assert st.mint_ticket() is not None
+assert st.mint_ticket() is None
+print("VB_PY_L3_OK")`,
+    ],
+    { encoding: "utf8" }
+  ).trim();
+  assert.equal(pyL3, "VB_PY_L3_OK");
+
+  // CRIT-06: protectedPaths: ["*"] must protect arbitrary paths
+  const starMw = createVeilBreakMiddleware({ mode: "strict", protectedPaths: ["*"] });
+  let starStatus = 0;
+  await starMw(
+    {
+      method: "GET",
+      url: "/anything/here",
+      socket: { remoteAddress: "127.0.0.1" },
+      headers: { "user-agent": "Mozilla/5.0 Chrome/130.0" },
+    },
+    {
+      headersSent: false,
+      writableEnded: false,
+      setHeader() {},
+      writeHead(code) { starStatus = code; this.headersSent = true; },
+      end() { this.writableEnded = true; },
+    }
+  );
+  assert.equal(starStatus, 403);
+
+  // MED-08: cross-site Sec-Fetch-Site rejected on /__veilbreak/ticket + IPv6 CIDR trustProxy
+  const v6Mw = createVeilBreakMiddleware({
+    mode: "strict",
+    trustProxy: ["2001:db8:cafe::/48"],
+    maxTicketsPerMinPerIp: 1,
+  });
+  function callTicket(headers, remoteAddress = "2001:db8:cafe::1") {
+    return new Promise((resolve) => {
+      let status = 200;
+      v6Mw(
+        { method: "GET", url: "/__veilbreak/ticket", socket: { remoteAddress }, headers },
+        {
+          headersSent: false,
+          writableEnded: false,
+          setHeader() {},
+          writeHead(code) { status = code; this.headersSent = true; },
+          end(body) { this.writableEnded = true; resolve({ status, body: JSON.parse(String(body)) }); },
+        }
+      );
+    });
+  }
+  const csrf = await callTicket({
+    "user-agent": "Mozilla/5.0 Chrome/130.0",
+    "sec-fetch-site": "cross-site",
+  });
+  assert.equal(csrf.status, 403);
+  assert.equal(csrf.body.error, "CROSS_SITE_TICKET_DENIED");
+
+  // IPv6 CIDR unwraps trusted hop to distinct real client IPs
+  const rA1 = await callTicket({ "user-agent": "Mozilla/5.0 Chrome/130.0", "x-forwarded-for": "198.51.100.1, 2001:db8:cafe::2" });
+  const rA2 = await callTicket({ "user-agent": "Mozilla/5.0 Chrome/130.0", "x-forwarded-for": "198.51.100.1, 2001:db8:cafe::2" });
+  const rB1 = await callTicket({ "user-agent": "Mozilla/5.0 Chrome/130.0", "x-forwarded-for": "198.51.100.2, 2001:db8:cafe::2" });
+  assert.equal(rA1.status, 200);
+  assert.equal(rA2.status, 429);
+  assert.equal(rB1.status, 200);
+
+  // HIGH-10 + Loop 4 CRIT-2 & HIGH-5: Connection strip, absolute-form ? before /, and query %20 preservation
+  let seenAuth = null;
+  let seenXff = null;
+  let seenUrl = null;
+  const upstream = http.createServer((req, res) => {
+    seenAuth = req.headers.authorization || null;
+    seenXff = req.headers["x-forwarded-for"] || null;
+    seenUrl = req.url;
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end('{"ok":true}');
+  });
+  await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
+  const gate = createVeilBreakServer({
+    target: `http://127.0.0.1:${upstream.address().port}`,
+    mode: "strict",
+    protectedPaths: ["/api"],
+  });
+  const baseUrl = await gate.listen(0, "127.0.0.1");
+  try {
+    // Loop 3 CRIT-3 + Loop 4 HIGH-5: valid %20 preserved without 500 or %2520 double-encoding & /api%3F blocked 403!
+    const sp = await fetch(`${baseUrl}/public/my%20file.json?q=hello%20world`, {
+      headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0" },
+    });
+    assert.equal(sp.status, 200);
+    assert.equal(seenUrl, "/public/my%20file.json?q=hello%20world");
+    // Loop 4 CRIT-2: raw absolute-form `GET http://example.com?x=/api/secret` must NOT forward `/api/secret`!
+    const rawAbs = await new Promise((resolve, reject) => {
+      const req = http.request(
+        { host: "127.0.0.1", port: gate.server.address().port, method: "GET", path: "http://example.com?x=/api/secret", headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0" } },
+        (r) => { r.resume(); r.on("end", () => resolve(r.statusCode)); }
+      );
+      req.on("error", reject);
+      req.end();
+    });
+    assert.equal(rawAbs, 200);
+    assert.equal(seenUrl, "/?x=/api/secret");
+    const qBypass = await fetch(`${baseUrl}/api%3F`, {
+      headers: { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0" },
+    });
+    assert.equal(qBypass.status, 403);
+    const res = await fetch(`${baseUrl}/public`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0",
+        Authorization: "Bearer keep-me",
+        Connection: "keep-alive, authorization, x-forwarded-for",
+      },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(seenAuth, "Bearer keep-me");
+    assert.ok(seenXff && seenXff.includes("127.0.0.1"));
+  } finally {
+    await gate.close();
+    await new Promise((r) => upstream.close(r));
+  }
+});

@@ -3,12 +3,22 @@
   "version": "2.0.0",
   "description": "Zero-dependency anti-stealth & multi-engine browser integrity gate — 14 cross-engine invariants, interaction kinematics, <veil-break> Web Component, middleware, and Python verifier",
   "main": "src/index.js",
+  "types": "src/index.d.ts",
   "exports": {
-    ".": "./src/index.js"
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./probes": "./src/probes.js",
+    "./middleware": "./src/middleware.js",
+    "./browser-sdk": "./src/browser-sdk.js",
+    "./nl": "./src/nl.js",
+    "./package.json": "./package.json"
   },
   "files": [
     "src/",
     "bin/",
+    "python/",
     "LICENSE",
     "README.md"
   ],

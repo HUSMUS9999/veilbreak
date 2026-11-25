@@ -2,7 +2,7 @@
 
 const crypto = require("node:crypto");
 
-const VALID_MODES = new Set(["off", "monitor", "balanced", "strict"]);
+const VALID_MODES = new Set(["off", "monitor", "observe", "balanced", "strict"]);
 
 // Bitmask flags for compact wire telemetry envelope (VB_ATTEST_V2)
 const FLAG = Object.freeze({
@@ -52,9 +52,9 @@ function decodeFlags(flags) {
 function normalizeMode(mode = "strict") {
   const m = String(mode || "strict").trim().toLowerCase();
   if (!VALID_MODES.has(m)) {
-    throw new Error(`Invalid VeilBreak mode '${mode}': expected 'off', 'monitor', 'balanced', or 'strict'`);
+    throw new Error(`Invalid VeilBreak mode '${mode}': expected 'off', 'monitor', 'observe', 'balanced', or 'strict'`);
   }
-  return m;
+  return m === "observe" ? "monitor" : m;
 }
 
 function thresholdForMode(mode) {
@@ -353,6 +353,16 @@ function verifyAttestation({
     const p = pRaw.slice(0, 48);
     const d = typeof attObj.d === "string" ? attObj.d : "";
 
+    const DEFINED_FLAG_MASK = 0x7fff;
+    const minScoreForFlags = (bits) => {
+      let minScore = 0;
+      const weights = [2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 4];
+      for (let i = 0; i < weights.length; i++) {
+        if ((bits & (1 << i)) !== 0) minScore += weights[i];
+      }
+      return minScore;
+    };
+
     const validNums =
       (v === undefined || v === 2) &&
       typeof s === "number" &&
@@ -362,10 +372,10 @@ function verifyAttestation({
       typeof f === "number" &&
       Number.isInteger(f) &&
       f >= 0 &&
-      f <= 0xfffff;
+      f <= DEFINED_FLAG_MASK;
     const validDelims = !tkStr.includes("|") && !nnStr.includes("|") && !p.includes("|");
     const validHexDigest = /^[0-9a-f]{64}$/i.test(d);
-    const coherentFlagScore = !(f > 0 && s === 0);
+    const coherentFlagScore = validNums && s >= minScoreForFlags(f);
 
     if (!validNums || !validDelims || !validHexDigest || !coherentFlagScore) {
       reasons.push("ATTEST_INVALID");
