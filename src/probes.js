@@ -1,8 +1,21 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const path = require("node:path");
 
 const VALID_MODES = new Set(["off", "monitor", "observe", "balanced", "strict"]);
+
+const AUTOMATION_OR_CLI_UA_RE =
+  /HeadlessChrome|Playwright|Puppeteer|PhantomJS|SlimerJS|curl\/|wget\/|python-requests|python-urllib|python-httpx|aiohttp|go-http-client|httpie|libwww-perl|java\/|okhttp|axios\/|node-fetch|undici|burp|caido|mitmproxy|insomnia|postman|sqlmap|ffuf|nuclei/i;
+
+const PROXY_LEAK_HEADERS = [
+  "proxy-connection",
+  "x-burp-header",
+  "x-burp-collaborator",
+  "x-caido-id",
+  "x-caido-replay",
+  "x-mitmproxy",
+];
 
 // Bitmask flags for compact wire telemetry envelope (VB_ATTEST_V2)
 const FLAG = Object.freeze({
@@ -64,8 +77,13 @@ function thresholdForMode(mode) {
   return Number.POSITIVE_INFINITY;
 }
 
+function sha256Buf(s) {
+  const data = Buffer.isBuffer(s) || ArrayBuffer.isView(s) ? s : Buffer.from(String(s || ""), "utf8");
+  return crypto.createHash("sha256").update(data).digest();
+}
+
 function sha256Hex(s) {
-  return crypto.createHash("sha256").update(String(s || ""), "utf8").digest("hex");
+  return sha256Buf(s).toString("hex");
 }
 
 function safeEqualHex(a, b) {
@@ -77,6 +95,39 @@ function safeEqualHex(a, b) {
   return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
 }
 
+function countLeadingZeroBits(buf) {
+  let bits = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const byte = buf[i];
+    if (byte === 0) {
+      bits += 8;
+      continue;
+    }
+    bits += Math.clz32(byte) - 24;
+    break;
+  }
+  return bits;
+}
+
+function verifyPowSolution(ticket, challenge, powNonce, difficulty) {
+  if (!Number.isInteger(difficulty) || difficulty <= 0) return true;
+  if (typeof ticket !== "string" || !ticket || typeof challenge !== "string" || !challenge) return false;
+  if (typeof powNonce !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(powNonce)) return false;
+  const digest = sha256Buf(`VB_POW_V2|${ticket}|${challenge}|${powNonce}`);
+  return countLeadingZeroBits(digest) >= difficulty;
+}
+
+function solvePowChallenge(ticket, challenge, difficulty) {
+  if (!Number.isInteger(difficulty) || difficulty <= 0) return "0";
+  for (let i = 0; i < 10_000_000; i++) {
+    const nonce = i.toString(36);
+    if (countLeadingZeroBits(sha256Buf(`VB_POW_V2|${ticket}|${challenge}|${nonce}`)) >= difficulty) {
+      return nonce;
+    }
+  }
+  throw new Error("VB_POW_SOLVE_EXCEEDED_LIMIT");
+}
+
 function getHeader(headers, name) {
   if (!headers || typeof headers !== "object") return "";
   const target = name.toLowerCase();
@@ -86,6 +137,187 @@ function getHeader(headers, name) {
     }
   }
   return "";
+}
+
+function hasHeader(headers, name) {
+  if (!headers || typeof headers !== "object") return false;
+  const target = name.toLowerCase();
+  return Object.keys(headers).some((k) => k.toLowerCase() === target);
+}
+
+function isAutomationOrCliUa(headers) {
+  const ua = getHeader(headers, "user-agent").trim();
+  const ch = getHeader(headers, "sec-ch-ua");
+  if (!ua) return true;
+  return AUTOMATION_OR_CLI_UA_RE.test(ua) || /HeadlessChrome/i.test(ch);
+}
+
+function decodePercentLenient(s) {
+  return s.replace(/(?:%[0-9a-fA-F]{2})+/g, (run) => {
+    let out = "";
+    let i = 0;
+    while (i < run.length) {
+      const b = parseInt(run.slice(i + 1, i + 3), 16);
+      if (b === 0x00) {
+        out += "\0";
+        i += 3;
+        continue;
+      }
+      if (b >= 0x01 && b <= 0x7f) {
+        out += String.fromCharCode(b);
+        i += 3;
+        continue;
+      }
+      let matched = false;
+      for (const n of [2, 3, 4]) {
+        if (i + n * 3 <= run.length) {
+          const sub = run.slice(i, i + n * 3);
+          try {
+            out += decodeURIComponent(sub);
+            i += n * 3;
+            matched = true;
+            break;
+          } catch {}
+        }
+      }
+      if (!matched) {
+        out += run.slice(i, i + 3);
+        i += 3;
+      }
+    }
+    return out;
+  });
+}
+
+function stripSchemeAndAuthority(rawUrl) {
+  let s = String(rawUrl || "/").trimStart();
+  if (!s) return "/";
+  if (/^https?:\/\//i.test(s)) {
+    const afterScheme = s.indexOf("://") + 3;
+    const slashIdx = s.indexOf("/", afterScheme);
+    const backslashIdx = s.indexOf("\\", afterScheme);
+    const qIdx = s.indexOf("?", afterScheme);
+    const hIdx = s.indexOf("#", afterScheme);
+    const cuts = [slashIdx, backslashIdx, qIdx, hIdx].filter((i) => i >= 0);
+    if (cuts.length === 0) return "/";
+    const first = Math.min(...cuts);
+    if (s[first] === "/") s = s.slice(first);
+    else if (s[first] === "\\") s = "/" + s.slice(first + 1);
+    else s = "/" + s.slice(first);
+  }
+  return s;
+}
+
+function cleanPathNoCollapse(rawPath) {
+  let s = String(rawPath || "/").replace(/\\/g, "/").replace(/\0.*$/, "");
+  if (!s.startsWith("/")) s = "/" + s;
+  s = s
+    .split("/")
+    .map((seg) => seg.split(";")[0])
+    .join("/")
+    .replace(/\/+/g, "/");
+  if (s.length > 1) s = s.replace(/\/+$/, "");
+  return s || "/";
+}
+
+function trimSegmentNoise(normPath) {
+  let s = String(normPath || "/")
+    .split("/")
+    .map((seg) => seg.replace(/[\s.]+$/, ""))
+    .join("/")
+    .replace(/\/+/g, "/");
+  if (!s.startsWith("/")) s = "/" + s;
+  if (s.length > 1) s = s.replace(/\/+$/, "");
+  return s || "/";
+}
+
+function normalizePathname(rawUrl) {
+  let s = stripSchemeAndAuthority(rawUrl);
+  const qIdx = s.indexOf("?");
+  if (qIdx >= 0) s = s.slice(0, qIdx);
+  if (!s) return "/";
+  for (let pass = 0; pass < 2; pass++) {
+    const dec = decodePercentLenient(s);
+    if (dec === s) break;
+    s = dec;
+  }
+  s = s.replace(/\0/g, "").replace(/\\/g, "/");
+  if (!s.startsWith("/")) s = "/" + s;
+  s = s
+    .split("/")
+    .map((seg) => seg.split(";")[0])
+    .join("/");
+  s = path.posix.normalize(s);
+  if (!s.startsWith("/")) s = "/" + s;
+  if (s.length > 1) s = s.replace(/\/+$/, "");
+  s = s.replace(/\?/g, "%3F");
+  return s;
+}
+
+function expandPathCandidates(rawUrl) {
+  const raw = stripSchemeAndAuthority(rawUrl);
+  const qIdx = raw.indexOf("?");
+  const rawPath = qIdx >= 0 ? raw.slice(0, qIdx) : raw;
+  const set = new Set();
+
+  const addAll = (val) => {
+    const n1 = normalizePathname(val);
+    const n2 = cleanPathNoCollapse(val);
+    set.add(n1);
+    set.add(n2);
+    set.add(trimSegmentNoise(n1));
+    set.add(trimSegmentNoise(n2));
+  };
+
+  addAll(rawPath);
+
+  const rawHash = rawPath.indexOf("#");
+  if (rawHash >= 0) {
+    addAll(rawPath.slice(0, rawHash));
+  }
+
+  let dec = rawPath;
+  for (let pass = 0; pass < 2; pass++) {
+    const next = decodePercentLenient(dec);
+    if (next === dec) break;
+    dec = next;
+  }
+  addAll(dec);
+
+  const nullIdx = dec.indexOf("\0");
+  if (nullIdx >= 0) addAll(dec.slice(0, nullIdx));
+
+  const decQ = dec.indexOf("?");
+  if (decQ >= 0) addAll(dec.slice(0, decQ));
+  const decH = dec.indexOf("#");
+  if (decH >= 0) addAll(dec.slice(0, decH));
+
+  return Array.from(set);
+}
+
+function isProtectedPath(rawUrl, protectedPaths) {
+  const candidates = expandPathCandidates(rawUrl);
+  for (const norm of candidates) {
+    const normLower = norm.toLowerCase();
+    for (const rule of protectedPaths) {
+      if (rule instanceof RegExp) {
+        rule.lastIndex = 0;
+        if (rule.test(norm)) return true;
+      } else {
+        const rawRule = String(rule).trim();
+        if (rawRule === "*") return true;
+        const rNorm = normalizePathname(rawRule).toLowerCase();
+        if (
+          rNorm === "/" ||
+          normLower === rNorm ||
+          normLower.startsWith(rNorm.endsWith("/") ? rNorm : `${rNorm}/`)
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -209,10 +441,6 @@ function evaluateTelemetry(telemetry = {}, { mode = "strict", antiCdp = true } =
 
 /**
  * Stage 2: Biomechanical Interaction Kinematics Guard.
- * Catches synthetic JS clicks (`isTrusted === false`) and programmatic CDP/Juggler
- * teleport clicks (`<= 3` pointermoves, sub-12ms pointerdown->click dwell, exact center hit)
- * while exempting trusted keyboard activation (`isTrusted && detail === 0`) and
- * touch/pen pointer types (`pointerType === "touch" | "pen"`).
  */
 function evaluateInteraction(interaction = {}, { mode = "strict" } = {}) {
   const m = normalizeMode(mode);
@@ -234,13 +462,11 @@ function evaluateInteraction(interaction = {}, { mode = "strict" } = {}) {
     const dwellMs = Number(interaction.dwellMs ?? 99);
     const hitCenter = Boolean(interaction.hitExactCenter);
 
-    // Exempt keyboard activation (Enter/Space on focused control -> isTrusted=true, detail=0)
     if (detail >= 1) {
       if (moves <= 3 && dwellMs >= 0 && dwellMs < 12 && hitCenter) {
         score += 4;
         reasons.push("TELEPORT_CLICK_PHYSICS");
-      } else if (moves === 0 && dwellMs > 0 && dwellMs < 8) {
-        // Require dwellMs > 0 so coarsened 100ms privacy timers (dwellMs === 0) don't false-positive
+      } else if (moves === 0 && dwellMs > 0 && dwellMs < 8 && hitCenter) {
         score += 4;
         reasons.push("ZERO_TRAJECTORY_INSTANT_CLICK");
       }
@@ -251,12 +477,49 @@ function evaluateInteraction(interaction = {}, { mode = "strict" } = {}) {
   return { ok: !blocked, blocked, score, threshold, mode: m, reasons };
 }
 
-function buildAttestation({ mode = "strict", ticket = "", nonce = "", telemetry = {}, antiCdp = true } = {}) {
+function buildAttestation({
+  mode = "strict",
+  ticket = "",
+  nonce = "",
+  telemetry = {},
+  antiCdp = true,
+  challenge = "",
+  difficulty = 0,
+  powNonce = null,
+  method = "",
+  path: reqPath = "",
+} = {}) {
   const m = normalizeMode(mode);
   if (m === "off") return null;
   const ev = evaluateTelemetry(telemetry, { mode: m, antiCdp });
   const safeTicket = String(ticket || "").replace(/\|/g, "");
   const safeNonce = String(nonce || "").replace(/\|/g, "");
+  const safeChallenge = String(challenge || "").replace(/\|/g, "");
+  const safeMethod = String(method || "").trim().toUpperCase().replace(/\|/g, "");
+  const safePath = reqPath ? normalizePathname(String(reqPath)).replace(/\|/g, "") : "";
+
+  if (safeChallenge) {
+    const solved =
+      powNonce !== null && powNonce !== undefined
+        ? String(powNonce).replace(/\|/g, "")
+        : solvePowChallenge(safeTicket, safeChallenge, difficulty || 0);
+    const digest = sha256Hex(
+      `VB_ATTEST_V2|${safeTicket}|${safeNonce}|${ev.score}|${ev.flags}|${ev.platform}|${safeChallenge}|${solved}|${safeMethod}|${safePath}`
+    );
+    return {
+      v: 2,
+      s: ev.score,
+      f: ev.flags,
+      p: ev.platform,
+      w: solved,
+      m: safeMethod,
+      u: safePath,
+      d: digest,
+      r: ev.reasons,
+      blocked: ev.blocked,
+    };
+  }
+
   const digest = sha256Hex(`VB_ATTEST_V2|${safeTicket}|${safeNonce}|${ev.score}|${ev.flags}|${ev.platform}`);
   return {
     v: 2,
@@ -275,6 +538,11 @@ function verifyAttestation({
   attest = null,
   ticket = "",
   nonce = "",
+  expectedChallenge = "",
+  expectedDifficulty = 0,
+  expectedMethod = "",
+  expectedPath = "",
+  requireFetchMetadata = false,
 } = {}) {
   const m = normalizeMode(mode);
   const threshold = thresholdForMode(m);
@@ -287,14 +555,43 @@ function verifyAttestation({
   const ua = getHeader(headers, "user-agent");
   const secChUa = getHeader(headers, "sec-ch-ua");
   const secChPlat = getHeader(headers, "sec-ch-ua-platform").replace(/"/g, "").toLowerCase();
+  const sfs = getHeader(headers, "sec-fetch-site").trim().toLowerCase();
+  const sfm = getHeader(headers, "sec-fetch-mode").trim().toLowerCase();
+  const cl = getHeader(headers, "content-length");
+  const te = getHeader(headers, "transfer-encoding");
 
-  // 1. Headless / automation User-Agent or Sec-CH-UA check (enforced in BOTH strict & balanced!)
-  if (
-    (m === "strict" || m === "balanced") &&
-    (/HeadlessChrome|Playwright|Puppeteer|PhantomJS|SlimerJS/i.test(ua) || /HeadlessChrome/i.test(secChUa))
-  ) {
+  // 0. Smuggling & proxy header leak checks
+  if (cl && te) {
+    reasons.push("CL_TE_SMUGGLING");
+    score += 10;
+  }
+  for (const ph of PROXY_LEAK_HEADERS) {
+    if (hasHeader(headers, ph)) {
+      reasons.push("PROXY_HEADER_LEAK");
+      score += 6;
+      break;
+    }
+  }
+
+  // 1. Headless / automation / CLI / proxy User-Agent or Sec-CH-UA check (strict & balanced)
+  if ((m === "strict" || m === "balanced") && isAutomationOrCliUa(headers)) {
     reasons.push("AUTOMATION_UA_DENIED");
     score += 6;
+  }
+
+  // 1b. Cross-site & Fetch Metadata coherence check
+  if (sfs.includes("cross-site")) {
+    reasons.push("CROSS_SITE_REQUEST_DENIED");
+    score += 6;
+  }
+  const chromeMatch = /Chrome\/(\d+)/i.exec(ua);
+  const ffMatch = /Firefox\/(\d+)/i.exec(ua);
+  const claimsModern = (chromeMatch && Number(chromeMatch[1]) >= 80) || (ffMatch && Number(ffMatch[1]) >= 90);
+  if (requireFetchMetadata && claimsModern && !isAutomationOrCliUa(headers)) {
+    if (!sfs || (sfs !== "same-origin" && sfs !== "same-site") || !sfm) {
+      reasons.push("FETCH_METADATA_MISSING");
+      score += 4;
+    }
   }
 
   // 2. OS header contradiction check
@@ -313,13 +610,12 @@ function verifyAttestation({
   }
 
   // 3. Legacy GREASE / Chrome version contradiction
-  const chromeVerMatch = ua.match(/Chrome\/(\d+)/);
-  if (chromeVerMatch && Number(chromeVerMatch[1]) >= 115 && secChUa.includes('" Not A;Brand";v="99"')) {
+  if (chromeMatch && Number(chromeMatch[1]) >= 115 && secChUa.includes('" Not A;Brand";v="99"')) {
     reasons.push("SEC_CH_UA_GREASE_LIE");
     score += 2;
   }
 
-  // 4. Parse & strictly validate VB_ATTEST_V2 telemetry envelope (matches Python verifier parity)
+  // 4. Parse & strictly validate VB_ATTEST_V2 telemetry envelope
   let attObj = attest;
   if (typeof attObj === "string") {
     const trimmed = attObj.trim();
@@ -336,6 +632,10 @@ function verifyAttestation({
 
   const tkStr = String(ticket ?? "");
   const nnStr = String(nonce ?? "");
+  const expChal = String(expectedChallenge ?? "");
+  const expDiff = Number.isInteger(expectedDifficulty) && expectedDifficulty > 0 ? expectedDifficulty : 0;
+  const expMethod = String(expectedMethod || "").trim().toUpperCase();
+  const expPath = expectedPath ? normalizePathname(String(expectedPath)) : "";
 
   if (attObj === null || attObj === undefined) {
     if (m === "strict" || m === "balanced") {
@@ -352,6 +652,9 @@ function verifyAttestation({
     const pRaw = attObj.p === null || attObj.p === undefined ? "" : String(attObj.p);
     const p = pRaw.slice(0, 48);
     const d = typeof attObj.d === "string" ? attObj.d : "";
+    const w = attObj.w === undefined || attObj.w === null ? "" : String(attObj.w);
+    const attM = attObj.m === undefined || attObj.m === null ? "" : String(attObj.m).trim().toUpperCase();
+    const attU = attObj.u === undefined || attObj.u === null ? "" : String(attObj.u);
 
     const DEFINED_FLAG_MASK = 0x7fff;
     const minScoreForFlags = (bits) => {
@@ -373,25 +676,55 @@ function verifyAttestation({
       Number.isInteger(f) &&
       f >= 0 &&
       f <= DEFINED_FLAG_MASK;
-    const validDelims = !tkStr.includes("|") && !nnStr.includes("|") && !p.includes("|");
+    const validDelims =
+      !tkStr.includes("|") &&
+      !nnStr.includes("|") &&
+      !p.includes("|") &&
+      !w.includes("|") &&
+      !attM.includes("|") &&
+      !attU.includes("|");
     const validHexDigest = /^[0-9a-f]{64}$/i.test(d);
     const coherentFlagScore = validNums && s >= minScoreForFlags(f);
+    const validNonce = !expChal || /^[A-Za-z0-9_-]{8,64}$/.test(nnStr);
 
-    if (!validNums || !validDelims || !validHexDigest || !coherentFlagScore) {
+    if (!validNums || !validDelims || !validHexDigest || !coherentFlagScore || !validNonce) {
       reasons.push("ATTEST_INVALID");
       score += 6;
     } else {
-      const expectedV2 = sha256Hex(`VB_ATTEST_V2|${tkStr}|${nnStr}|${s}|${f}|${p}`);
-      if (!safeEqualHex(d.toLowerCase(), expectedV2)) {
-        reasons.push("ATTEST_DIGEST_MISMATCH");
-        score += 6;
+      if (expChal) {
+        if (expDiff > 0 && !verifyPowSolution(tkStr, expChal, w, expDiff)) {
+          reasons.push("POW_INVALID");
+          score += 6;
+        }
+        if (expMethod && attM !== expMethod) {
+          reasons.push("REQUEST_BINDING_MISMATCH");
+          score += 6;
+        }
+        if (expPath && (!attU || normalizePathname(attU) !== expPath)) {
+          if (!reasons.includes("REQUEST_BINDING_MISMATCH")) {
+            reasons.push("REQUEST_BINDING_MISMATCH");
+            score += 6;
+          }
+        }
+        const expectedV2 = sha256Hex(
+          `VB_ATTEST_V2|${tkStr}|${nnStr}|${s}|${f}|${p}|${expChal}|${w}|${attM}|${attU}`
+        );
+        if (!safeEqualHex(d.toLowerCase(), expectedV2)) {
+          reasons.push("ATTEST_DIGEST_MISMATCH");
+          score += 6;
+        }
+      } else {
+        const expectedV2 = sha256Hex(`VB_ATTEST_V2|${tkStr}|${nnStr}|${s}|${f}|${p}`);
+        if (!safeEqualHex(d.toLowerCase(), expectedV2)) {
+          reasons.push("ATTEST_DIGEST_MISMATCH");
+          score += 6;
+        }
       }
+
       score += s;
       const decoded = decodeFlags(f);
-      if (decoded.length > 0) {
-        for (const r of decoded) {
-          if (!reasons.includes(r)) reasons.push(r);
-        }
+      for (const r of decoded) {
+        if (!reasons.includes(r)) reasons.push(r);
       }
       if (s >= threshold) {
         reasons.push("BROWSER_INVARIANTS_FAILED");
@@ -411,7 +744,12 @@ function verifyAttestation({
     reasons.includes("ATTEST_REQUIRED") ||
     reasons.includes("ATTEST_INVALID") ||
     reasons.includes("ATTEST_DIGEST_MISMATCH") ||
-    reasons.includes("AUTOMATION_UA_DENIED");
+    reasons.includes("AUTOMATION_UA_DENIED") ||
+    reasons.includes("POW_INVALID") ||
+    reasons.includes("REQUEST_BINDING_MISMATCH") ||
+    reasons.includes("CROSS_SITE_REQUEST_DENIED") ||
+    reasons.includes("CL_TE_SMUGGLING") ||
+    reasons.includes("PROXY_HEADER_LEAK");
   const blocked = m !== "monitor" && (score >= threshold || hardFail);
   return {
     ok: !blocked,
@@ -432,5 +770,12 @@ module.exports = {
   evaluateInteraction,
   buildAttestation,
   verifyAttestation,
+  isAutomationOrCliUa,
+  verifyPowSolution,
+  solvePowChallenge,
+  normalizePathname,
+  stripSchemeAndAuthority,
+  expandPathCandidates,
+  isProtectedPath,
   sha256Hex,
 };

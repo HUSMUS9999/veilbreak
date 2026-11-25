@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }} + Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22"]
+        python: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Run Node.js + Python parity test suite
+        run: npm test
+
+      - name: Verify CLI help and NL dry-run
+        run: |
+          node bin/veilbreak.js --help >/dev/null
+          node bin/veilbreak.js protect --help >/dev/null
+          node bin/veilbreak.js explain "block stealth browsers on http://localhost:3000 behind nginx" --json >/dev/null
+
+      - name: Verify TypeScript declarations (root + subpath exports)
+        run: |
+          npm install --no-save typescript @types/node
+          trap 'rm -f .ci_typecheck.mts' EXIT
+          cat <<'EOF' > .ci_typecheck.mts
+          import * as root from "./src/index.js";
+          import type { VeilBreakNaturalLanguagePlan } from "./src/nl.js";
+          import { FLAG, evaluateTelemetry, verifyAttestation, sha256Hex } from "./src/probes.js";
+          import { createVeilBreakMiddleware, createVeilBreakServer } from "./src/middleware.js";
+          import { buildBrowserGateScript, buildPlaygroundHtml } from "./src/browser-sdk.js";
+          const plan: VeilBreakNaturalLanguagePlan = root.compileNaturalLanguage("block stealth browsers on http://localhost:3000 behind nginx");
+          const bit: number = FLAG.WEBDRIVER_FLAG;
+          const hash: string = sha256Hex(new Uint8Array([1, 2, 3]));
+          const ev = evaluateTelemetry({ webdriver: false, platform: "Linux x86_64" }, { mode: "observe" });
+          const v = verifyAttestation({ mode: "strict", headers: {}, attest: null });
+          const mw = createVeilBreakMiddleware({ mode: "strict", trustProxy: ["10.0.0.0/8", "::1/128"], antiCdp: false });
+          const srv = createVeilBreakServer({ target: "http://127.0.0.1:3000" });
+          const js: string = buildBrowserGateScript({ defaultMode: "observe", antiCdp: false });
+          const pg: string = buildPlaygroundHtml({ mode: "strict", antiCdp: false });
+          void plan; void bit; void hash; void ev; void v; void mw; void srv; void js; void pg;
+          EOF
+          npx tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 .ci_typecheck.mts
+
+      - name: Verify npm tarball hygiene (no __pycache__ / .pyc leaks)
+        run: |
+          PACK_LIST=$(npm pack --dry-run 2>&1)
+          echo "$PACK_LIST"
+          if echo "$PACK_LIST" | grep -Eq '(\.pyc|__pycache__)'; then
+            echo "ERROR: Python bytecode leaked into npm tarball!"
+            exit 1
+          fi

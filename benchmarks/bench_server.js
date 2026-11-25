@@ -11,15 +11,22 @@ const http = require("node:http");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { createVeilBreakServer } = require("../src/index.js");
+const { createVeilBreakServer, thresholdForMode } = require("../src/index.js");
 
 const PORT = Number(process.env.VB_BENCH_PORT || 18995);
 const OUT_DIR = process.env.VB_BENCH_OUT || path.join(os.tmpdir(), "veilbreak_bench_runs");
 const MODE = process.env.VB_BENCH_MODE || "strict";
+const MAX_TICKETS_PER_MIN = Number(process.env.VB_BENCH_MAX_TICKETS_PER_MIN || 1000);
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
 function safeLabel(raw) {
   return String(raw || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64) || "unknown";
+}
+
+function writeJsonAtomic(filePath, data) {
+  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, typeof data === "string" || Buffer.isBuffer(data) ? data : JSON.stringify(data));
+  fs.renameSync(tmp, filePath);
 }
 
 async function main() {
@@ -38,7 +45,7 @@ async function main() {
       const chunks = [];
       req.on("data", (c) => chunks.push(c));
       req.on("end", () => {
-        fs.writeFileSync(path.join(OUT_DIR, `${label}.json`), Buffer.concat(chunks));
+        writeJsonAtomic(path.join(OUT_DIR, `${label}.json`), Buffer.concat(chunks));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end('{"ok":true}');
       });
@@ -68,17 +75,20 @@ async function main() {
     const wcStatus = wc ? (wc.dataset.veilbreakStatus || "unknown") : "missing";
 
     let apiPassive = { status: 0, ok: false, error: null };
+    const tApi0 = performance.now();
     try {
       const r = await fetch("/api/secret");
       apiPassive = { status: r.status, ok: r.ok, body: await r.json() };
     } catch (e) {
       apiPassive = { status: 0, ok: false, error: String(e.message || e) };
     }
+    const apiFetchPowMs = Number((performance.now() - tApi0).toFixed(2));
 
     const report = {
       label,
       mode: ${JSON.stringify(MODE)},
       probeMs,
+      apiFetchPowMs,
       stage1: {
         blocked: s1.blocked || !apiPassive.ok,
         score: s1.score,
@@ -131,20 +141,18 @@ async function main() {
   await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
   const upPort = upstream.address().port;
 
-  // Record genuine server-side HTTP 403 page-load denials so the runner never confuses crashes with HTTP 403!
+  let lastDetect = null;
   const gate = createVeilBreakServer({
     target: `http://127.0.0.1:${upPort}`,
     mode: MODE,
     protectedPaths: ["/api"],
+    maxTicketsPerMinPerIp: MAX_TICKETS_PER_MIN,
     autoBlockPage: false,
     onDetect: (ev) => {
-      if (ev.blocked && ev.path === "/" && Array.isArray(ev.reasons) && ev.reasons.includes("AUTOMATION_UA_DENIED")) {
-        // Also written by query param via wrapper below if needed
-      }
+      lastDetect = ev;
     },
   });
 
-  // Intercept raw HTTP request URL query label for HTTP-layer 403 page-load tracking
   const origEmit = gate.server.listeners("request")[0];
   gate.server.removeAllListeners("request");
   gate.server.on("request", (req, res) => {
@@ -155,24 +163,28 @@ async function main() {
       res.end = (...args) => {
         if (res.statusCode === 403) {
           const safe = safeLabel(lbl);
-          fs.writeFileSync(
-            path.join(OUT_DIR, `${safe}.json`),
-            JSON.stringify({
-              label: safe,
-              mode: MODE,
-              probeMs: 0.0,
-              stage1: {
-                blocked: true,
-                score: 6,
-                threshold: 2,
-                reasons: ["AUTOMATION_UA_DENIED (HTTP 403 on page load)"],
-                wcStatus: "blocked_http_403",
-                apiPassiveStatus: 403,
-                apiPassiveOk: false,
-              },
-              stage2: null,
-            })
-          );
+          let parsed = null;
+          try {
+            if (args[0]) parsed = JSON.parse(Buffer.isBuffer(args[0]) ? args[0].toString("utf8") : String(args[0]));
+          } catch {}
+          const reasons = (parsed && parsed.reasons) || (lastDetect && lastDetect.reasons) || ["HTTP_403_DENIED"];
+          const score = (parsed && parsed.score) ?? (lastDetect && lastDetect.score) ?? 6;
+          const threshold = (parsed && parsed.threshold) ?? thresholdForMode(MODE);
+          writeJsonAtomic(path.join(OUT_DIR, `${safe}.json`), {
+            label: safe,
+            mode: MODE,
+            probeMs: 0.0,
+            stage1: {
+              blocked: true,
+              score,
+              threshold,
+              reasons: reasons.map((r) => `${r} (HTTP 403 on page load)`),
+              wcStatus: "blocked_http_403",
+              apiPassiveStatus: 403,
+              apiPassiveOk: false,
+            },
+            stage2: null,
+          });
         }
         return origEnd(...args);
       };

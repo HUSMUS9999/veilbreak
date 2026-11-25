@@ -3,9 +3,16 @@
 const crypto = require("node:crypto");
 const http = require("node:http");
 const https = require("node:https");
-const path = require("node:path");
 const zlib = require("node:zlib");
-const { normalizeMode, verifyAttestation } = require("./probes.js");
+const {
+  normalizeMode,
+  verifyAttestation,
+  isAutomationOrCliUa,
+  normalizePathname,
+  stripSchemeAndAuthority,
+  isProtectedPath,
+  sha256Hex,
+} = require("./probes.js");
 const { buildBrowserGateScript, buildPlaygroundHtml } = require("./browser-sdk.js");
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -34,6 +41,15 @@ const PROTECTED_FROM_CONN_STRIP = new Set([
   "true-client-ip",
 ]);
 
+const PROXY_LEAK_HEADERS = [
+  "proxy-connection",
+  "x-burp-header",
+  "x-burp-collaborator",
+  "x-caido-id",
+  "x-caido-replay",
+  "x-mitmproxy",
+];
+
 function stripHopByHop(headers, { isRequest = false } = {}) {
   const out = {};
   const connTokens = new Set();
@@ -58,135 +74,16 @@ function escapeHtmlAttr(s) {
   return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function decodePercentLenient(s) {
-  // Decode valid ASCII/UTF-8 percent escapes without letting invalid %ff poison adjacent runs (CRIT-2)
-  return s.replace(/(?:%[0-9a-fA-F]{2})+/g, (run) => {
-    let out = "";
-    let i = 0;
-    while (i < run.length) {
-      const b = parseInt(run.slice(i + 1, i + 3), 16);
-      if (b >= 0x01 && b <= 0x7f) {
-        out += String.fromCharCode(b);
-        i += 3;
-        continue;
-      }
-      let matched = false;
-      for (const n of [2, 3, 4]) {
-        if (i + n * 3 <= run.length) {
-          const sub = run.slice(i, i + n * 3);
-          try {
-            out += decodeURIComponent(sub);
-            i += n * 3;
-            matched = true;
-            break;
-          } catch {}
-        }
-      }
-      if (!matched) {
-        out += run.slice(i, i + 3);
-        i += 3;
-      }
-    }
-    return out;
-  });
-}
-
-function stripSchemeAndAuthority(rawUrl) {
-  let s = String(rawUrl || "/").trim();
-  if (/^https?:\/\//i.test(s)) {
-    const afterScheme = s.indexOf("://") + 3;
-    const slashIdx = s.indexOf("/", afterScheme);
-    const qIdx = s.indexOf("?", afterScheme);
-    const hIdx = s.indexOf("#", afterScheme);
-    const cuts = [slashIdx, qIdx, hIdx].filter((i) => i >= 0);
-    if (cuts.length === 0) return "/";
-    const first = Math.min(...cuts);
-    s = s[first] === "/" ? s.slice(first) : "/" + s.slice(first);
-  }
-  return s;
-}
-
-function normalizePathname(rawUrl) {
-  let s = stripSchemeAndAuthority(rawUrl);
-  const qIdx = s.indexOf("?");
-  if (qIdx >= 0) s = s.slice(0, qIdx);
-  if (!s) return "/";
-  for (let pass = 0; pass < 2; pass++) {
-    const dec = decodePercentLenient(s);
-    if (dec === s) break;
-    s = dec;
-  }
-  s = s.replace(/\\/g, "/");
-  if (!s.startsWith("/")) s = "/" + s;
-  s = s
-    .split("/")
-    .map((seg) => seg.split(";")[0])
-    .join("/");
-  s = path.posix.normalize(s);
-  if (!s.startsWith("/")) s = "/" + s;
-  return s;
-}
-
-function expandPathCandidates(rawUrl) {
-  const raw = stripSchemeAndAuthority(rawUrl);
-  const qIdx = raw.indexOf("?");
-  const rawPath = qIdx >= 0 ? raw.slice(0, qIdx) : raw;
-  const set = new Set();
-  set.add(normalizePathname(rawPath));
-
-  const rawHash = rawPath.indexOf("#");
-  if (rawHash >= 0) {
-    set.add(normalizePathname(rawPath.slice(0, rawHash)));
-  }
-
-  let dec = rawPath;
-  for (let pass = 0; pass < 2; pass++) {
-    const next = decodePercentLenient(dec);
-    if (next === dec) break;
-    dec = next;
-  }
-  const decQ = dec.indexOf("?");
-  if (decQ >= 0) set.add(normalizePathname(dec.slice(0, decQ)));
-  const decH = dec.indexOf("#");
-  if (decH >= 0) set.add(normalizePathname(dec.slice(0, decH)));
-
-  return Array.from(set);
-}
-
-function sendJson(res, status, obj) {
+function sendJson(res, status, obj, extraHeaders = {}) {
   if (res.headersSent || res.writableEnded) return;
   const payload = JSON.stringify(obj);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
     "Content-Length": Buffer.byteLength(payload),
+    ...extraHeaders,
   });
   res.end(payload);
-}
-
-function isProtectedPath(rawUrl, protectedPaths) {
-  const candidates = expandPathCandidates(rawUrl);
-  for (const norm of candidates) {
-    const normLower = norm.toLowerCase();
-    for (const rule of protectedPaths) {
-      if (rule instanceof RegExp) {
-        rule.lastIndex = 0;
-        if (rule.test(norm)) return true;
-      } else {
-        const rawRule = String(rule).trim();
-        if (rawRule === "*") return true;
-        const rNorm = normalizePathname(rawRule).toLowerCase();
-        if (
-          rNorm === "/" ||
-          normLower === rNorm ||
-          normLower.startsWith(rNorm.endsWith("/") ? rNorm : `${rNorm}/`)
-        ) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
 }
 
 function serializeRulesForClient(protectedPaths) {
@@ -195,12 +92,6 @@ function serializeRulesForClient(protectedPaths) {
     const raw = String(p).trim();
     return raw === "*" ? "*" : normalizePathname(raw);
   });
-}
-
-function isAutomationUa(headers) {
-  const ua = String(headers?.["user-agent"] || "");
-  const ch = String(headers?.["sec-ch-ua"] || "");
-  return /HeadlessChrome|Playwright|Puppeteer|PhantomJS|SlimerJS/i.test(ua) || /HeadlessChrome/i.test(ch);
 }
 
 function normalizeIp(ip) {
@@ -317,7 +208,6 @@ function compileTrustedProxies(spec) {
 
 function resolveClientIp(req, trustedProxies) {
   const remoteRaw = String(req?.socket?.remoteAddress || req?.ip || "").trim();
-  // Pass RAW IP (preserving ::1 / ::ffff:...) to trustedProxies.has() before normalizing return value (Loop 4 MED-9)
   if (remoteRaw && trustedProxies.size > 0 && trustedProxies.has(remoteRaw)) {
     const xff = String(req?.headers?.["x-forwarded-for"] || "");
     if (xff) {
@@ -333,18 +223,82 @@ function resolveClientIp(req, trustedProxies) {
   return normalizeIp(remoteRaw) || "unknown";
 }
 
+function positiveIntOption(val, fallback, name) {
+  if (val === undefined || val === null) return fallback;
+  if (!Number.isInteger(val) || val < 1) {
+    throw new Error(`Invalid VeilBreak option '${name}': expected a positive integer`);
+  }
+  return val;
+}
+
+function nonNegativeIntOption(val, fallback, name, maxVal = 22) {
+  if (val === undefined || val === null) return fallback;
+  if (!Number.isInteger(val) || val < 0 || val > maxVal) {
+    throw new Error(`Invalid VeilBreak option '${name}': expected an integer in 0..${maxVal}`);
+  }
+  return val;
+}
+
+function parseHttpOriginHost(originRaw) {
+  const s = String(originRaw || "").trim();
+  if (!s) return "";
+  try {
+    const u = new URL(s);
+    if ((u.protocol !== "http:" && u.protocol !== "https:") || u.username || u.password) return "";
+    const h = u.host.toLowerCase();
+    if (u.protocol === "http:" && h.endsWith(":80")) return h.slice(0, -3);
+    if (u.protocol === "https:" && h.endsWith(":443")) return h.slice(0, -4);
+    return h;
+  } catch {
+    return "";
+  }
+}
+
+function normalizeHostDefaultPort(hostRaw) {
+  const h = String(hostRaw || "").trim().toLowerCase();
+  if (h.endsWith(":80")) return h.slice(0, -3);
+  if (h.endsWith(":443")) return h.slice(0, -4);
+  return h;
+}
+
+function isHtmlBootstrapNavigation(req) {
+  const headers = req.headers || {};
+  if (req.method !== "GET") return false;
+  const accept = String(headers["accept"] || "").toLowerCase();
+  const sfm = String(headers["sec-fetch-mode"] || "").trim().toLowerCase();
+  const sfd = String(headers["sec-fetch-dest"] || "").trim().toLowerCase();
+  const ua = String(headers["user-agent"] || "");
+  if (!accept.includes("text/html")) return false;
+  if (isAutomationOrCliUa(headers)) return false;
+  if (headers["content-length"] && headers["transfer-encoding"]) return false;
+  if (PROXY_LEAK_HEADERS.some((h) => headers[h] !== undefined)) return false;
+  if (headers["x-original-url"] || headers["x-rewrite-url"]) return false;
+  const cm = /Chrome\/(\d+)/i.exec(ua);
+  const fm = /Firefox\/(\d+)/i.exec(ua);
+  const claimsModern = (cm && Number(cm[1]) >= 80) || (fm && Number(fm[1]) >= 90);
+  if (claimsModern && (sfm !== "navigate" || sfd !== "document")) return false;
+  return true;
+}
+
 function createVeilBreakMiddleware(options = {}) {
   const mode = normalizeMode(options.mode ?? "strict");
   const basePath = String(options.basePath || "/__veilbreak").replace(/\/+$/, "") || "/__veilbreak";
-  const protectedPaths = Array.isArray(options.protectedPaths) && options.protectedPaths.length > 0
-    ? options.protectedPaths
-    : ["/api"];
+  const protectedPaths =
+    Array.isArray(options.protectedPaths) && options.protectedPaths.length > 0
+      ? options.protectedPaths
+      : ["/api"];
   const ticketTtlMs = Number.isFinite(options.ticketTtlMs) && options.ticketTtlMs > 0 ? options.ticketTtlMs : 60_000;
-  const maxTickets = Number.isFinite(options.maxTickets) && options.maxTickets >= 100 ? options.maxTickets : 30_000;
-  const maxTicketsPerMinPerIp =
-    Number.isFinite(options.maxTicketsPerMinPerIp) && options.maxTicketsPerMinPerIp > 0
-      ? options.maxTicketsPerMinPerIp
-      : 180;
+  const maxTickets = positiveIntOption(options.maxTickets, 30_000, "maxTickets");
+  const maxTicketsPerMinPerIp = positiveIntOption(options.maxTicketsPerMinPerIp, 180, "maxTicketsPerMinPerIp");
+  const ticketPowBits = nonNegativeIntOption(
+    options.ticketPowBits,
+    mode === "strict" ? 12 : mode === "balanced" ? 10 : 0,
+    "ticketPowBits",
+    22
+  );
+  const bindIp = options.bindIp !== false;
+  const requireFetchMetadata = options.requireFetchMetadata !== undefined ? Boolean(options.requireFetchMetadata) : mode === "strict";
+  const antiCdp = options.antiCdp !== false;
   const autoBlockPage = options.autoBlockPage !== false;
   const enablePlayground = options.enablePlayground !== false;
   const exposeDebugHeaders = options.exposeDebugHeaders !== false;
@@ -358,12 +312,12 @@ function createVeilBreakMiddleware(options = {}) {
     defaultMode: mode,
     protectedRules: serializeRulesForClient(protectedPaths),
     autoBlockPage,
+    antiCdp,
   });
-  const playgroundHtml = buildPlaygroundHtml({ basePath, mode });
+  const playgroundHtml = buildPlaygroundHtml({ basePath, mode, antiCdp });
 
   function allowTicketMint(ip, now) {
     const key = ip || "unknown";
-    // Bounded expired-first LRU cleanup — never call `.clear()` wiping active rate buckets (MED-08)
     if (ticketRates.size > 10_000) {
       for (const [k, arr] of ticketRates) {
         const fresh = arr.filter((t) => now - t < 60_000);
@@ -379,7 +333,6 @@ function createVeilBreakMiddleware(options = {}) {
       }
     }
     const arr = (ticketRates.get(key) || []).filter((t) => now - t < 60_000);
-    // Refresh Map order (delete + set) for true LRU so actively rate-limited IPs are NEVER evicted first (MED-20)
     ticketRates.delete(key);
     if (arr.length >= maxTicketsPerMinPerIp) {
       ticketRates.set(key, arr);
@@ -390,34 +343,43 @@ function createVeilBreakMiddleware(options = {}) {
     return true;
   }
 
-  function mintTicket() {
+  function mintTicket({ ip, userAgent }) {
     const now = Date.now();
     if (tickets.size >= maxTickets) {
-      // Evict ONLY expired tickets; refuse minting at capacity rather than kicking live users (MED-08)
-      for (const [k, exp] of tickets) {
-        if (exp <= now) tickets.delete(k);
+      for (const [k, rec] of tickets) {
+        if (rec.exp <= now) tickets.delete(k);
       }
       if (tickets.size >= maxTickets) {
         return null;
       }
     }
     const tk = crypto.randomBytes(16).toString("hex");
-    tickets.set(tk, now + ticketTtlMs);
-    return tk;
+    const challenge = crypto.randomBytes(16).toString("hex");
+    tickets.set(tk, {
+      exp: now + ticketTtlMs,
+      ip: normalizeIp(ip),
+      uaHash: sha256Hex(userAgent || ""),
+      challenge,
+      difficulty: ticketPowBits,
+    });
+    return { ticket: tk, challenge, difficulty: ticketPowBits };
   }
 
   function consumeTicket(tk) {
-    if (!tk) return false;
+    if (!tk) return null;
     const now = Date.now();
-    const exp = tickets.get(tk);
-    if (!exp) return false;
+    const rec = tickets.get(tk);
+    if (!rec) return null;
     tickets.delete(tk);
-    return exp > now;
+    if (rec.exp <= now) return null;
+    return rec;
   }
 
   async function handleInner(req, res, next) {
     const urlStr = req.originalUrl || req.url || "/";
     const pathname = normalizePathname(urlStr);
+    const remoteRaw = String(req?.socket?.remoteAddress || req?.ip || "").trim();
+    const fromTrustedProxy = Boolean(remoteRaw && trustedProxies.size > 0 && trustedProxies.has(remoteRaw));
 
     if (req.method === "GET" && pathname === `${basePath}/gate.js`) {
       res.writeHead(200, {
@@ -446,26 +408,67 @@ function createVeilBreakMiddleware(options = {}) {
     }
 
     if ((req.method === "GET" || req.method === "POST") && pathname === `${basePath}/ticket`) {
-      const sfs = String(req.headers["sec-fetch-site"] || "").toLowerCase();
+      const headers = req.headers || {};
+      const sfs = String(headers["sec-fetch-site"] || "").trim().toLowerCase();
+      const sfm = String(headers["sec-fetch-mode"] || "").trim().toLowerCase();
+      const origin = String(headers["origin"] || "").trim();
+      const host = String(headers["host"] || "").trim().toLowerCase();
+
       if (sfs.includes("cross-site")) {
         sendJson(res, 403, { ok: false, error: "CROSS_SITE_TICKET_DENIED" });
         return true;
       }
-      if ((mode === "strict" || mode === "balanced") && isAutomationUa(req.headers)) {
-        sendJson(res, 403, { ok: false, error: "VEILBREAK_DENIED", reasons: ["AUTOMATION_UA_DENIED"] });
-        return true;
+      if (origin && host) {
+        const oh = parseHttpOriginHost(origin);
+        if (!oh || oh !== normalizeHostDefaultPort(host)) {
+          sendJson(res, 403, { ok: false, error: "CROSS_ORIGIN_TICKET_DENIED" });
+          return true;
+        }
       }
+      if (mode === "strict" || mode === "balanced") {
+        for (const ph of PROXY_LEAK_HEADERS) {
+          if (headers[ph] !== undefined) {
+            sendJson(res, 403, { ok: false, error: "VEILBREAK_DENIED", reasons: ["PROXY_HEADER_LEAK"] });
+            return true;
+          }
+        }
+        if (isAutomationOrCliUa(headers)) {
+          sendJson(res, 403, { ok: false, error: "VEILBREAK_DENIED", reasons: ["AUTOMATION_UA_DENIED"] });
+          return true;
+        }
+        const ua = String(headers["user-agent"] || "");
+        const acceptLang = String(headers["accept-language"] || "").trim();
+        const conn = String(headers["connection"] || "").trim().toLowerCase();
+        const cm = /Chrome\/(\d+)/i.exec(ua);
+        const fm = /Firefox\/(\d+)/i.exec(ua);
+        const claimsModern = (cm && Number(cm[1]) >= 80) || (fm && Number(fm[1]) >= 90);
+        if (requireFetchMetadata && claimsModern) {
+          if (!sfs || (sfs !== "same-origin" && sfs !== "same-site") || !sfm) {
+            sendJson(res, 403, { ok: false, error: "VEILBREAK_DENIED", reasons: ["FETCH_METADATA_MISSING"] });
+            return true;
+          }
+          if (!acceptLang) {
+            sendJson(res, 403, { ok: false, error: "VEILBREAK_DENIED", reasons: ["ACCEPT_LANGUAGE_REQUIRED"] });
+            return true;
+          }
+          if (!fromTrustedProxy && conn === "close") {
+            sendJson(res, 403, { ok: false, error: "VEILBREAK_DENIED", reasons: ["REPEATER_CONNECTION_CLOSE"] });
+            return true;
+          }
+        }
+      }
+
       const remoteIp = resolveClientIp(req, trustedProxies);
       if (!allowTicketMint(remoteIp, Date.now())) {
         sendJson(res, 429, { ok: false, error: "TICKET_RATE_LIMITED" });
         return true;
       }
-      const tk = mintTicket();
-      if (!tk) {
+      const minted = mintTicket({ ip: remoteIp, userAgent: headers["user-agent"] || "" });
+      if (!minted) {
         sendJson(res, 503, { ok: false, error: "TICKET_CAPACITY_EXCEEDED" });
         return true;
       }
-      sendJson(res, 200, { ok: true, ticket: tk, mode });
+      sendJson(res, 200, { ok: true, ...minted, mode }, { Vary: "Origin, User-Agent" });
       return true;
     }
 
@@ -474,16 +477,51 @@ function createVeilBreakMiddleware(options = {}) {
       return false;
     }
 
-    // Allow CORS preflight OPTIONS without attestation
-    if (req.method === "OPTIONS" && req.headers["access-control-request-method"]) {
+    // Strict cross-origin CORS preflight OPTIONS exemption
+    const preOriginHost = parseHttpOriginHost(req.headers?.["origin"]);
+    const preHost = normalizeHostDefaultPort(req.headers?.["host"]);
+    const preUa = String(req.headers?.["user-agent"] || "");
+    const preCm = /Chrome\/(\d+)/i.exec(preUa);
+    const preFm = /Firefox\/(\d+)/i.exec(preUa);
+    const preModern = ((preCm && Number(preCm[1]) >= 80) || (preFm && Number(preFm[1]) >= 90)) && !isAutomationOrCliUa(req.headers);
+    const hasPreProxyLeak = PROXY_LEAK_HEADERS.some((h) => req.headers?.[h] !== undefined);
+    const isCorsPreflight =
+      req.method === "OPTIONS" &&
+      req.headers?.["access-control-request-method"] &&
+      Boolean(preOriginHost) &&
+      (!preHost || preOriginHost !== preHost) &&
+      !isAutomationOrCliUa(req.headers) &&
+      !hasPreProxyLeak &&
+      !req.headers?.["x-original-url"] &&
+      !req.headers?.["x-rewrite-url"] &&
+      !req.headers?.["x-http-method"] &&
+      (!preModern ||
+        (String(req.headers?.["sec-fetch-mode"] || "").toLowerCase() === "cors" &&
+          (fromTrustedProxy || String(req.headers?.["connection"] || "").toLowerCase() !== "close"))) &&
+      !(req.headers?.["content-length"] && req.headers?.["transfer-encoding"]) &&
+      !req.headers?.["x-http-method-override"] &&
+      !req.headers?.["x-method-override"];
+    if (isCorsPreflight) {
       if (typeof next === "function") next();
       return false;
     }
 
-    // Pass RAW urlStr so pre-hash & decoded-%3F/%23 bypasses are caught (Loop 3 CRIT-3 & HIGH-7)
-    if (!isProtectedPath(urlStr, protectedPaths)) {
-      if ((mode === "strict" || mode === "balanced") && isAutomationUa(req.headers)) {
-        const verdict = { ok: false, blocked: true, score: 6, threshold: mode === "strict" ? 2 : 4, mode, reasons: ["AUTOMATION_UA_DENIED"] };
+    const overrideUrls = [req.headers?.["x-original-url"], req.headers?.["x-rewrite-url"]]
+      .flat()
+      .filter((u) => typeof u === "string" && u.trim() !== "");
+    const overrideTargetsProtected = overrideUrls.some((u) => isProtectedPath(u, protectedPaths));
+    const protectedHit = isProtectedPath(urlStr, protectedPaths) || overrideTargetsProtected;
+
+    if (!protectedHit) {
+      if ((mode === "strict" || mode === "balanced") && isAutomationOrCliUa(req.headers)) {
+        const verdict = {
+          ok: false,
+          blocked: true,
+          score: 6,
+          threshold: mode === "strict" ? 2 : 4,
+          mode,
+          reasons: ["AUTOMATION_UA_DENIED"],
+        };
         if (exposeDebugHeaders) {
           res.setHeader("X-VeilBreak-Score", "6");
           res.setHeader("X-VeilBreak-Mode", mode);
@@ -491,13 +529,17 @@ function createVeilBreakMiddleware(options = {}) {
         if (onDetect) {
           try { onDetect({ ...verdict, path: pathname, method: req.method }); } catch {}
         }
-        sendJson(res, 403, { ok: false, error: "VEILBREAK_DENIED", reasons: ["AUTOMATION_UA_DENIED"] });
+        const body = exposeDebugHeaders
+          ? { ok: false, error: "VEILBREAK_DENIED", score: 6, threshold: verdict.threshold, reasons: ["AUTOMATION_UA_DENIED"] }
+          : { ok: false, error: "VEILBREAK_DENIED" };
+        sendJson(res, 403, body);
         return true;
       }
       if (typeof next === "function") next();
       return false;
     }
 
+    const remoteIp = resolveClientIp(req, trustedProxies);
     const ticket = String(req.headers["x-vb-ticket"] || "");
     const nonce = String(req.headers["x-vb-nonce"] || "");
     let attest = null;
@@ -508,13 +550,44 @@ function createVeilBreakMiddleware(options = {}) {
       attest = { invalid: true };
     }
 
-    const ticketValid = consumeTicket(ticket);
-    const verdict = verifyAttestation({ mode, headers: req.headers, attest, ticket, nonce });
-    if ((mode === "strict" || mode === "balanced") && !ticketValid) {
-      verdict.blocked = true;
-      verdict.ok = false;
+    const ticketRec = consumeTicket(ticket);
+    const verdict = verifyAttestation({
+      mode,
+      headers: req.headers,
+      attest,
+      ticket,
+      nonce,
+      expectedChallenge: ticketRec ? ticketRec.challenge : "",
+      expectedDifficulty: ticketRec ? ticketRec.difficulty : 0,
+      expectedMethod: ticketRec ? req.method : "",
+      expectedPath: ticketRec ? urlStr : "",
+      requireFetchMetadata,
+    });
+
+    if (overrideTargetsProtected) {
       verdict.score += 6;
-      verdict.reasons.push("TICKET_REPLAYED_OR_INVALID");
+      verdict.reasons.push("PROXY_PATH_OVERRIDE_HEADER");
+      if (mode !== "monitor") {
+        verdict.blocked = true;
+        verdict.ok = false;
+      }
+    }
+
+    if (mode === "strict" || mode === "balanced") {
+      if (!ticketRec) {
+        verdict.blocked = true;
+        verdict.ok = false;
+        verdict.score += 6;
+        verdict.reasons.push("TICKET_REPLAYED_OR_INVALID");
+      } else {
+        const uaHash = sha256Hex(req.headers["user-agent"] || "");
+        if ((bindIp && ticketRec.ip !== remoteIp) || ticketRec.uaHash !== uaHash) {
+          verdict.blocked = true;
+          verdict.ok = false;
+          verdict.score += 6;
+          verdict.reasons.push("TICKET_BINDING_MISMATCH");
+        }
+      }
     }
 
     req.veilBreak = verdict;
@@ -570,10 +643,11 @@ function decodeHtmlBody(rawBuf, contentEncoding, maxOutputLength = 5 * 1024 * 10
   return null;
 }
 
-function injectGateIntoHtml(html, basePath, mode, autoBlockPage) {
+function injectGateIntoHtml(html, basePath, mode, autoBlockPage, antiCdp = true) {
   const safeSrc = escapeHtmlAttr(`${basePath}/gate.js`);
   const blockAttr = autoBlockPage === false ? "false" : "true";
-  const tag = `<script src="${safeSrc}" data-mode="${escapeHtmlAttr(mode)}" data-block-page="${blockAttr}"></script>`;
+  const cdpAttr = antiCdp === false ? ' data-anti-cdp="false"' : "";
+  const tag = `<script src="${safeSrc}" data-mode="${escapeHtmlAttr(mode)}" data-block-page="${blockAttr}"${cdpAttr}></script>`;
   if (new RegExp(`<script\\b[^>]*\\bsrc=["']${safeSrc.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`, "i").test(html)) {
     return html;
   }
@@ -592,7 +666,7 @@ function injectGateIntoHtml(html, basePath, mode, autoBlockPage) {
 function encodeForwardPathname(normPath) {
   return normPath
     .split("/")
-    .map((seg) => encodeURIComponent(seg))
+    .map((seg) => encodeURIComponent(seg.replace(/%3F/gi, "?")))
     .join("/");
 }
 
@@ -604,19 +678,34 @@ function createVeilBreakServer(options = {}) {
   const basePath = String(options.basePath || "/__veilbreak").replace(/\/+$/, "") || "/__veilbreak";
   const mode = normalizeMode(options.mode ?? "strict");
   const injectGate = options.injectGate !== false;
+  const antiCdp = options.antiCdp !== false;
   const maxHtmlBytes = Number.isFinite(options.maxHtmlBytes) && options.maxHtmlBytes > 0 ? options.maxHtmlBytes : 5 * 1024 * 1024;
   const upstreamTimeoutMs = Number.isFinite(options.upstreamTimeoutMs) && options.upstreamTimeoutMs > 0 ? options.upstreamTimeoutMs : 30_000;
-  const middleware = createVeilBreakMiddleware({ ...options, basePath, mode });
+  const middleware = createVeilBreakMiddleware({ ...options, basePath, mode, antiCdp });
   const clientMod = targetUrl.protocol === "https:" ? https : http;
   const baseTargetPath = targetUrl.pathname && targetUrl.pathname !== "/" ? targetUrl.pathname.replace(/\/+$/, "") : "";
 
+  const effectivePaths =
+    Array.isArray(options.protectedPaths) && options.protectedPaths.length > 0 ? options.protectedPaths : ["/api"];
+  const exposeDebugHeaders = options.exposeDebugHeaders !== false;
+
   const server = http.createServer((req, res) => {
-    Promise.resolve(middleware(req, res))
+    const htmlBootstrapProbe =
+      injectGate &&
+      mode !== "off" &&
+      mode !== "monitor" &&
+      isProtectedPath("/", effectivePaths) &&
+      !req.headers?.["x-vb-ticket"] &&
+      !req.headers?.["x-vb-attest"] &&
+      isHtmlBootstrapNavigation(req) &&
+      !normalizePathname(req.url || "/").startsWith(`${basePath}/`);
+
+    const middlewareStep = htmlBootstrapProbe ? Promise.resolve(false) : Promise.resolve(middleware(req, res));
+
+    middlewareStep
       .then((handled) => {
         if (handled) return;
 
-        // Reuse exact stripSchemeAndAuthority so `http://host?x=/api/secret` NEVER desyncs (Loop 4 CRIT-2)
-        // and encode only unescaped non-RFC3986 bytes in query so valid %20/%3A are NEVER double-encoded (Loop 4 HIGH-5)
         let rawFwd = stripSchemeAndAuthority(req.url || "/");
         let fwdSearch = "";
         const qIdx = rawFwd.indexOf("?");
@@ -627,10 +716,14 @@ function createVeilBreakServer(options = {}) {
         const safeSearch = fwdSearch
           ? fwdSearch.replace(/[^A-Za-z0-9\-._~!$&'()*+,;=:@/?%]|%(?![0-9a-fA-F]{2})/g, (ch) => encodeURIComponent(ch))
           : "";
-        let fwdPath = `${encodeForwardPathname(normalizePathname(rawFwd))}${safeSearch}`;
+        const normFwd = normalizePathname(rawFwd);
+        const trailingSlash = rawFwd.length > 1 && rawFwd.endsWith("/") && normFwd !== "/" ? "/" : "";
+        let fwdPath = `${encodeForwardPathname(normFwd)}${trailingSlash}${safeSearch}`;
         if (baseTargetPath) fwdPath = `${baseTargetPath}${fwdPath}`;
 
         const fwdHeaders = stripHopByHop(req.headers, { isRequest: true });
+        delete fwdHeaders["x-original-url"];
+        delete fwdHeaders["x-rewrite-url"];
         fwdHeaders.host = targetUrl.host;
         const remoteIp = normalizeIp(req.socket?.remoteAddress || "");
         if (remoteIp) {
@@ -642,7 +735,12 @@ function createVeilBreakServer(options = {}) {
         if (injectGate && acceptHdr.includes("text/html")) {
           fwdHeaders["accept-encoding"] = "identity";
         }
+        if (htmlBootstrapProbe) {
+          delete fwdHeaders["if-modified-since"];
+          delete fwdHeaders["if-none-match"];
+        }
 
+        let responded = false;
         const upstreamReq = clientMod.request(
           {
             protocol: targetUrl.protocol,
@@ -655,12 +753,81 @@ function createVeilBreakServer(options = {}) {
           },
           (upRes) => {
             upRes.on("error", () => {
+              if (responded) return;
+              responded = true;
               if (!res.headersSent) sendJson(res, 502, { ok: false, error: "UPSTREAM_ERROR" });
               else res.destroy();
             });
 
             const statusCode = upRes.statusCode || 200;
             const ct = String(upRes.headers["content-type"] || "").toLowerCase();
+
+            // For wildcard HTML-bootstrap probes, ONLY allow genuine text/html responses (or header-only 3xx redirects without forwarding any non-HTML body!)
+            if (htmlBootstrapProbe && !ct.includes("text/html")) {
+              if (statusCode >= 301 && statusCode <= 308 && statusCode !== 304 && Boolean(upRes.headers["location"])) {
+                responded = true;
+                const redirHeaders = stripHopByHop(upRes.headers);
+                delete redirHeaders["content-length"];
+                delete redirHeaders["content-encoding"];
+                delete redirHeaders["content-type"];
+                redirHeaders["content-length"] = "0";
+                res.writeHead(statusCode, redirHeaders);
+                res.end();
+                upRes.destroy();
+                return;
+              }
+              responded = true;
+              if (typeof options.onDetect === "function") {
+                try {
+                  options.onDetect({
+                    ok: false,
+                    blocked: true,
+                    score: 6,
+                    threshold: mode === "strict" ? 2 : 4,
+                    mode,
+                    reasons: ["ATTEST_REQUIRED"],
+                    method: req.method,
+                    path: normalizePathname(req.url || "/"),
+                  });
+                } catch {}
+              }
+              const errBody = exposeDebugHeaders
+                ? { ok: false, error: "VEILBREAK_DENIED", reasons: ["ATTEST_REQUIRED"] }
+                : { ok: false, error: "VEILBREAK_DENIED" };
+              sendJson(res, 403, errBody);
+              upRes.destroy();
+              return;
+            }
+
+            // Never let an unattested CORS OPTIONS preflight leak body from a non-CORS upstream route!
+            if (
+              req.method === "OPTIONS" &&
+              Boolean(req.headers["access-control-request-method"]) &&
+              !req.veilBreak &&
+              mode !== "off" &&
+              mode !== "monitor" &&
+              isProtectedPath(req.url || "/", effectivePaths) &&
+              !upRes.headers["access-control-allow-origin"]
+            ) {
+              responded = true;
+              if (typeof options.onDetect === "function") {
+                try {
+                  options.onDetect({
+                    ok: false,
+                    blocked: true,
+                    score: 6,
+                    threshold: mode === "strict" ? 2 : 4,
+                    mode,
+                    reasons: ["CORS_PREFLIGHT_NOT_ENABLED"],
+                    method: req.method,
+                    path: normalizePathname(req.url || "/"),
+                  });
+                } catch {}
+              }
+              sendJson(res, 403, { ok: false, error: "CORS_PREFLIGHT_NOT_ENABLED" });
+              upRes.destroy();
+              return;
+            }
             const outHeaders = stripHopByHop(upRes.headers);
             const canHaveBody = req.method !== "HEAD" && statusCode !== 204 && statusCode !== 304;
 
@@ -708,10 +875,11 @@ function createVeilBreakServer(options = {}) {
                     return;
                   }
                 }
-                const html = injectGateIntoHtml(decoded.toString("utf8"), basePath, mode, options.autoBlockPage);
+                const html = injectGateIntoHtml(decoded.toString("utf8"), basePath, mode, options.autoBlockPage, antiCdp);
                 const buf = Buffer.from(html, "utf8");
                 outHeaders["content-length"] = String(buf.length);
                 delete outHeaders["etag"];
+                delete outHeaders["last-modified"];
                 res.writeHead(statusCode, outHeaders);
                 res.end(buf);
               });
@@ -724,6 +892,8 @@ function createVeilBreakServer(options = {}) {
 
         upstreamReq.on("timeout", () => upstreamReq.destroy(new Error("UPSTREAM_TIMEOUT")));
         upstreamReq.on("error", () => {
+          if (responded) return;
+          responded = true;
           if (!res.headersSent) sendJson(res, 502, { ok: false, error: "UPSTREAM_UNREACHABLE" });
           else res.destroy();
         });
@@ -751,7 +921,11 @@ function createVeilBreakServer(options = {}) {
       });
     },
     close() {
-      return new Promise((resolve) => server.close(() => resolve()));
+      return new Promise((resolve) => {
+        if (typeof server.closeIdleConnections === "function") server.closeIdleConnections();
+        server.close(() => resolve());
+        if (typeof server.closeAllConnections === "function") server.closeAllConnections();
+      });
     },
   };
 }

@@ -17,18 +17,23 @@ node bin/veilbreak.js explain "block stealth browsers on http://localhost:3000 o
 # 2. Protect your app in strict mode (maximum protection across Chromium & Gecko)
 node bin/veilbreak.js ask "block stealth browsers on http://localhost:3000 on port 8080"
 
-# 3. Balanced mode (allows single-signal Canvas farbling while still enforcing tickets)
+# 3. Protect behind Nginx / Caddy / ALB (enables IPv4/IPv6 CIDR --trust-proxy)
+node bin/veilbreak.js ask "block stealth browsers on http://localhost:3000 on port 8080 behind nginx"
+
+# 4. Balanced mode (allows single-signal Canvas farbling while still enforcing IP/UA/PoW tickets)
 node bin/veilbreak.js ask "protect http://localhost:3000 on port 8080 in balanced mode"
 
-# 4. Monitor & score traffic without blocking anyone (recommended initial rollout)
+# 5. Monitor & score traffic without blocking anyone (recommended initial rollout)
 node bin/veilbreak.js ask "watch for anti-detect browsers without blocking on http://localhost:3000"
 
-# 5. Print ready-to-paste HTML, <veil-break> Web Component, and Express snippets
+# 6. Print ready-to-paste HTML, <veil-break> Web Component, and Express snippets
 node bin/veilbreak.js ask "give me html and web component snippet"
 
-# 6. Launch the interactive 14-invariant diagnostic playground
+# 7. Launch the interactive 14-invariant diagnostic playground
 node bin/veilbreak.js ask "show me a demo"
 ```
+
+The reverse-proxy shield automatically injects `/__veilbreak/gate.js` into HTML responses (including gzip/deflate/brotli upstream HTML) and transparently instruments both `window.fetch()` and async `XMLHttpRequest` (Axios, jQuery, HTMX, Angular HttpClient).
 
 ---
 
@@ -38,8 +43,9 @@ node bin/veilbreak.js ask "show me a demo"
    ```bash
    node bin/veilbreak.js demo --port 8089 --mode strict
    ```
+   *(If you want to keep browser DevTools open while testing, pass `--no-anti-cdp`.)*
 2. Open `http://127.0.0.1:8089/__veilbreak/playground` in **unmodified Google Chrome** or **Mozilla Firefox** (with DevTools closed) — all 14 invariants report `CLEAN` (`score = 0`), `<veil-break>` mounts cleanly, and clicking **Verify Protected Action** returns `HTTP 200`.
-3. Open the exact same URL from any automated or stealth browser (Playwright, Puppeteer-Stealth, Patchright, Rebrowser, CloakBrowser, Camoufox, SeleniumBase UC, or Nodriver) to watch the specific invariants trigger in real time.
+3. Try `curl http://127.0.0.1:8089/api/protected` or open the playground from any automated/stealth browser (Playwright, Puppeteer-Stealth, Patchright, Rebrowser, CloakBrowser, Camoufox, SeleniumBase UC, or Nodriver) to see the specific invariants and `403` enforcement trigger in real time.
 
 ---
 
