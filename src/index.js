@@ -1,6 +1,8 @@
 "use strict";
 
+const { SECURITY_PRESETS, VALID_MODES, resolvePreset } = require("./presets.js");
 const {
+  PROXY_LEAK_HEADERS,
   FLAG,
   decodeFlags,
   normalizeMode,
@@ -9,28 +11,38 @@ const {
   evaluateInteraction,
   buildAttestation,
   verifyAttestation,
+  buildHandshakeProof,
+  verifyHandshakeProof,
   isAutomationOrCliUa,
+  isAiCrawlerRequest,
   verifyPowSolution,
   solvePowChallenge,
   normalizePathname,
   stripSchemeAndAuthority,
   expandPathCandidates,
+  normalizeProtectedPaths,
   isProtectedPath,
   sha256Hex,
 } = require("./probes.js");
 const { buildBrowserGateScript, buildPlaygroundHtml } = require("./browser-sdk.js");
-const { createVeilBreakMiddleware, createVeilBreakServer } = require("./middleware.js");
+const { createVeilBreakMiddleware, createVeilBreakServer, injectGateIntoHtml } = require("./middleware.js");
 const { compileNaturalLanguage } = require("./nl.js");
 
 module.exports = {
+  PROXY_LEAK_HEADERS,
+  SECURITY_PRESETS,
+  VALID_MODES,
+  resolvePreset,
   FLAG,
   decodeFlags,
   normalizeMode,
   normalizePathname,
   stripSchemeAndAuthority,
   expandPathCandidates,
+  normalizeProtectedPaths,
   isProtectedPath,
   isAutomationOrCliUa,
+  isAiCrawlerRequest,
   verifyPowSolution,
   solvePowChallenge,
   thresholdForMode,
@@ -38,10 +50,13 @@ module.exports = {
   evaluateInteraction,
   buildAttestation,
   verifyAttestation,
+  buildHandshakeProof,
+  verifyHandshakeProof,
   buildBrowserGateScript,
   buildPlaygroundHtml,
   createVeilBreakMiddleware,
   createVeilBreakServer,
+  injectGateIntoHtml,
   compileNaturalLanguage,
   sha256Hex,
 };

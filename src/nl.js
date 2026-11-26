@@ -30,6 +30,7 @@ function detectMode(low) {
     /\b(monitor(?:ing)?|watch(?:ing)?|observ(?:e|ing)|audit(?:ing)?)\b/.test(low);
 
   if (explicitMonitor || plainMonitor) return "monitor";
+  if (/\b(paranoid|maximum|max security|lockdown)\b/.test(low)) return "paranoid";
   if (/\b(brave|librewolf|privacy browsers?|balanced|gentle|relaxed)\b/.test(low)) return "balanced";
   const offPattern = /\b(mode[\s=]+off|(?:turn off|disable)\s+(?:veilbreak|protection|blocking|shield|gate))\b/g;
   const strippedOff = strippedNegated.replace(offPattern, "");
@@ -37,6 +38,19 @@ function detectMode(low) {
     return "off";
   }
   return "strict";
+}
+
+function stripTrailingPunct(str, includeColon = true) {
+  let end = str.length;
+  while (end > 0) {
+    const ch = str[end - 1];
+    if (ch === "." || ch === "," || ch === ";" || ch === "!" || ch === "?" || ch === ")" || ch === "]" || (includeColon && ch === ":")) {
+      end--;
+    } else {
+      break;
+    }
+  }
+  return end === str.length ? str : str.slice(0, end);
 }
 
 function compileNaturalLanguage(sentence) {
@@ -50,7 +64,7 @@ function compileNaturalLanguage(sentence) {
   const explicitPortMatch = input.match(/\bport\s*[:=]?\s*(\d+)\b/i);
   const mode = detectMode(low);
 
-  const schemeUrlMatch = input.match(/[a-z][a-z0-9+.-]*:\/\/[^\s"'`;|&<>()[\]]+/i);
+  const schemeUrlMatch = input.match(/\b[a-z][a-z0-9+.-]{0,15}:\/\/[^\s"'`;|&<>()[\]]+/i);
   const bareLocalMatch = !schemeUrlMatch
     ? input.match(/\b(localhost|127\.0\.0\.1):(\d{1,5})(?:\/[^\s"'`;|&<>()[\]]*)?\b/i)
     : null;
@@ -91,7 +105,7 @@ function compileNaturalLanguage(sentence) {
 
   let target = "http://127.0.0.1:3000";
   if (schemeUrlMatch) {
-    const candidate = schemeUrlMatch[0].replace(/[.,;!?)\]:]+$/, "");
+    const candidate = stripTrailingPunct(schemeUrlMatch[0], true);
     let parsed;
     try {
       parsed = new URL(candidate);
@@ -103,7 +117,7 @@ function compileNaturalLanguage(sentence) {
     }
     target = parsed.toString().replace(/\/$/, "");
   } else if (bareLocalMatch) {
-    const candidate = `http://${bareLocalMatch[0].replace(/[.,;!?)\]:]+$/, "")}`;
+    const candidate = `http://${stripTrailingPunct(bareLocalMatch[0], true)}`;
     let parsed;
     try {
       parsed = new URL(candidate);
@@ -124,21 +138,23 @@ function compileNaturalLanguage(sentence) {
   if (mode === "monitor") {
     reasons.push("--mode monitor: scores browser visits via X-VeilBreak-Score without blocking users");
   } else if (mode === "balanced") {
-    reasons.push("--mode balanced (score >= 4): requires multiple corroborating physics failures or high-confidence automation proof; allows single-invariant canvas farbling");
+    reasons.push("--mode balanced (score >= 4): requires multiple corroborating physics failures or high-confidence automation proof; allows single-invariant canvas farbling, mobile IP changes, and open DevTools");
+  } else if (mode === "paranoid") {
+    reasons.push("--mode paranoid (score >= 2, 14-bit PoW, hard CDP/DevTools & AI-crawler block): maximum hardening");
   } else if (mode === "off") {
     reasons.push("--mode off: disables blocking for local development");
   } else {
-    reasons.push("--mode strict (score >= 2 + IP/UA/PoW-bound one-time tickets + CLI/automation UA denial): maximum stealth & scraper blocking");
+    reasons.push("--mode strict (score >= 2 + IP/UA/PoW-bound one-time tickets + Firecrawl/AI-crawler & automation UA denial): high-security stealth & scraper blocking");
   }
 
   const withoutUrls = input
-    .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s"'`,;|<>()[\]]+/gi, " ")
+    .replace(/\b[a-z][a-z0-9+.-]{0,15}:\/\/[^\s"'`,;|<>()[\]]+/gi, " ")
     .replace(/\b(?:localhost|127\.0\.0\.1):\d{1,5}(?:\/[^\s"'`,;|<>()[\]]*)?/gi, " ");
   const wantsAllRoutes =
     /\b(all routes|all paths|entire site|every route|everything)\b/.test(low) ||
     /(?:^|[\s,'"`(\[])(\/|\*)(?=$|[\s,.)\]])/.test(withoutUrls);
   const pathMatches = [...withoutUrls.matchAll(/(?:^|[\s,'"`(\[])(\/[a-z0-9._~/-]+)/gi)]
-    .map((m) => m[1].replace(/[.,;!?)\]]+$/, ""))
+    .map((m) => stripTrailingPunct(m[1], false))
     .filter((p) => p !== "/" && !p.startsWith("//"));
   const protectedPaths = pathMatches.length > 0 ? [...new Set(pathMatches)] : ["/api"];
   if (wantsAllRoutes && pathMatches.length === 0) {
@@ -152,7 +168,7 @@ function compileNaturalLanguage(sentence) {
       low
     );
   const explicitProxyMatch = !negatedProxy
-    ? input.match(/\b(?:trust[- ]proxy|behind\s+(?:nginx|caddy|haproxy|traefik|envoy|(?:a\s+)?(?:reverse\s+)?proxy)(?:\s+(?:at|on|ip))?)\s+((?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]*:[0-9a-fA-F:.]*)(?:\/\d{1,3})?)(?=$|[\s,.)\]])/i)
+    ? input.match(/\b(?:trust[- ]proxy|behind\s+(?:nginx|caddy|haproxy|traefik|envoy|(?:a\s+)?(?:reverse\s+)?proxy)(?:\s+(?:at|on|ip))?)\s+((?:\d{1,3}(?:\.\d{1,3}){3}|(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?:\.\d{1,3}){0,3})(?:\/\d{1,3})?)(?=$|[\s,.)\]])/i)
     : null;
   let trustProxy = "";
   if (explicitProxyMatch) {

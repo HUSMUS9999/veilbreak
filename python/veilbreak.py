@@ -35,10 +35,11 @@ FLAG_REASON_MAP: tuple[tuple[int, str], ...] = (
     (1 << 12, "VIEWPORT_GEOMETRY_IMPOSSIBILITY"),
     (1 << 13, "ENGINE_COHERENCE_LIE"),
     (1 << 14, "SYNTHETIC_INTERACTION"),
+    (1 << 15, "HEADLESS_SOFTWARE_WEBGL"),
 )
 
-_DEFINED_FLAG_MASK = 0x7FFF
-_FLAG_MIN_WEIGHTS: tuple[int, ...] = (2, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 4)
+_DEFINED_FLAG_MASK = 0xFFFF
+_FLAG_MIN_WEIGHTS: tuple[int, ...] = (2, 2, 2, 2, 2, 2, 4, 1, 4, 4, 4, 4, 2, 2, 4, 3)
 
 _AUTOMATION_OR_CLI_UA_RE = re.compile(
     r"HeadlessChrome|Playwright|Puppeteer|PhantomJS|SlimerJS|curl/|wget/|"
@@ -47,6 +48,16 @@ _AUTOMATION_OR_CLI_UA_RE = re.compile(
     r"insomnia|postman|sqlmap|ffuf|nuclei",
     re.I,
 )
+
+_AI_CRAWLER_UA_RE = re.compile(
+    r"firecrawl|mendable|apify|crawlee|browserless|scrapingbee|zenrows|brightdata|"
+    r"oxylabs|stagehand|browser-?use|steel-?browser|gptbot|oai-searchbot|chatgpt-user|"
+    r"claudebot|claude-web|anthropic-ai|perplexitybot|ccbot|bytespider|diffbot|scrapy|"
+    r"colly|zyte|phantombuster|hyperbrowser|browserbase",
+    re.I,
+)
+
+_CRAWLER_HEADER_PREFIXES = ("x-firecrawl-", "x-apify-", "x-browserless-", "x-scrapingbee-")
 
 _PROXY_LEAK_HEADERS = (
     "proxy-connection",
@@ -60,8 +71,30 @@ _PROXY_LEAK_HEADERS = (
 _PCT_RUN_RE = re.compile(r"(?:%[0-9a-fA-F]{2})+")
 
 
-def _min_score_for_flags(flags: int) -> int:
-    return sum(w for i, w in enumerate(_FLAG_MIN_WEIGHTS) if (flags & (1 << i)) != 0)
+def _cdp_weight_for(mode: str, anti_cdp: bool = True, allow_devtools: bool | None = None) -> int:
+    if not anti_cdp or mode == "off":
+        return 0
+    allow_dt = (mode not in ("strict", "paranoid")) if allow_devtools is None else bool(allow_devtools)
+    if allow_dt and mode in ("strict", "paranoid"):
+        return 1
+    if not allow_dt and mode == "balanced":
+        return 4
+    if mode == "paranoid":
+        return 6
+    if mode == "strict":
+        return 4
+    return 1
+
+
+def _min_score_for_flags(flags: int, cdp_weight: int | None = None) -> int:
+    total = 0
+    for i, w in enumerate(_FLAG_MIN_WEIGHTS):
+        if (flags & (1 << i)) != 0:
+            if i == 7 and cdp_weight is not None and cdp_weight >= 0:
+                total += cdp_weight
+            else:
+                total += w
+    return total
 
 
 def decode_flags(flags: int) -> list[str]:
@@ -115,48 +148,85 @@ def _normalize_ip(ip: str) -> str:
     return "127.0.0.1" if s == "::1" else s
 
 
+_HEX_VAL = {
+    **{ord(str(d)): d for d in range(10)},
+    **{ord(c): 10 + i for i, c in enumerate("abcdef")},
+    **{ord(c): 10 + i for i, c in enumerate("ABCDEF")},
+}
+
+
+def _hex_byte(s: str, idx: int) -> int:
+    return (_HEX_VAL[ord(s[idx + 1])] << 4) | _HEX_VAL[ord(s[idx + 2])]
+
+
 def _decode_percent_lenient(s: str) -> str:
+    if "%" not in s:
+        return s
+
     def _repl(match: re.Match[str]) -> str:
         run = match.group(0)
         out: list[str] = []
         i = 0
         n_run = len(run)
         while i < n_run:
-            b = int(run[i + 1 : i + 3], 16)
+            b = _hex_byte(run, i)
             if b == 0x00:
                 out.append("\0")
                 i += 3
                 continue
-            if 0x01 <= b <= 0x7F:
+            if b <= 0x7F:
                 out.append(chr(b))
                 i += 3
                 continue
-            matched = False
-            for seq_len in (2, 3, 4):
-                if i + seq_len * 3 <= n_run:
-                    raw_bytes = bytes(
-                        int(run[i + k * 3 + 1 : i + k * 3 + 3], 16) for k in range(seq_len)
-                    )
-                    try:
-                        out.append(raw_bytes.decode("utf-8", errors="strict"))
-                        i += seq_len * 3
-                        matched = True
-                        break
-                    except UnicodeDecodeError:
-                        pass
-            if not matched:
-                out.append(run[i : i + 3])
-                i += 3
+            # Zero-exception RFC 3629 UTF-8 leading-byte decoder
+            if 0xC2 <= b <= 0xDF and i + 6 <= n_run:
+                b2 = _hex_byte(run, i + 3)
+                if (b2 & 0xC0) == 0x80:
+                    out.append(chr(((b & 0x1F) << 6) | (b2 & 0x3F)))
+                    i += 6
+                    continue
+            elif 0xE0 <= b <= 0xEF and i + 9 <= n_run:
+                b2 = _hex_byte(run, i + 3)
+                b3 = _hex_byte(run, i + 6)
+                valid_b2 = (
+                    (0xA0 <= b2 <= 0xBF)
+                    if b == 0xE0
+                    else ((0x80 <= b2 <= 0x9F) if b == 0xED else ((b2 & 0xC0) == 0x80))
+                )
+                if valid_b2 and (b3 & 0xC0) == 0x80:
+                    out.append(chr(((b & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)))
+                    i += 9
+                    continue
+            elif 0xF0 <= b <= 0xF4 and i + 12 <= n_run:
+                b2 = _hex_byte(run, i + 3)
+                b3 = _hex_byte(run, i + 6)
+                b4 = _hex_byte(run, i + 9)
+                valid_b2 = (
+                    (0x90 <= b2 <= 0xBF)
+                    if b == 0xF0
+                    else ((0x80 <= b2 <= 0x8F) if b == 0xF4 else ((b2 & 0xC0) == 0x80))
+                )
+                if valid_b2 and (b3 & 0xC0) == 0x80 and (b4 & 0xC0) == 0x80:
+                    out.append(chr(((b & 0x07) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F)))
+                    i += 12
+                    continue
+            out.append(run[i : i + 3])
+            i += 3
         return "".join(out)
 
     return _PCT_RUN_RE.sub(_repl, s)
+
+
+_HTTP_SCHEME_RE = re.compile(r"^https?://", re.I)
 
 
 def _strip_scheme_and_authority(raw_url: str) -> str:
     s = str(raw_url or "/").lstrip()
     if not s:
         return "/"
-    if re.match(r"^https?://", s, re.I):
+    if s[0] == "/":
+        return s
+    if _HTTP_SCHEME_RE.match(s):
         after = s.find("://") + 3
         cuts = [
             idx
@@ -186,8 +256,15 @@ def _clean_path_no_collapse(raw_path: str) -> str:
     return s or "/"
 
 
+def _strip_trailing_spaces_and_dots(seg: str) -> str:
+    end = len(seg)
+    while end > 0 and seg[end - 1] in (".", " ", "\t", "\n", "\r", "\x0b", "\x0c"):
+        end -= 1
+    return seg if end == len(seg) else seg[:end]
+
+
 def _trim_segment_noise(norm_path: str) -> str:
-    s = "/".join(re.sub(r"[\s.]+$", "", seg) for seg in str(norm_path or "/").split("/"))
+    s = "/".join(_strip_trailing_spaces_and_dots(seg) for seg in str(norm_path or "/").split("/"))
     s = re.sub(r"/+", "/", s)
     if not s.startswith("/"):
         s = "/" + s
@@ -196,19 +273,23 @@ def _trim_segment_noise(norm_path: str) -> str:
     return s or "/"
 
 
-def normalize_pathname(raw_url: str) -> str:
-    s = _strip_scheme_and_authority(raw_url)
-    q_idx = s.find("?")
-    if q_idx >= 0:
-        s = s[:q_idx]
-    if not s:
-        return "/"
+_CLEAN_ASCII_PATH_RE = re.compile(
+    r"\A/(?:[A-Za-z0-9_~:@!$&'()*+,=-]+(?:\.[A-Za-z0-9_~:@!$&'()*+,=-]+)*(?:/[A-Za-z0-9_~:@!$&'()*+,=-]+(?:\.[A-Za-z0-9_~:@!$&'()*+,=-]+)*)*)?/?\Z"
+)
+
+
+def _decode_percent_2(s: str) -> str:
+    out = s
     for _ in range(2):
-        dec = _decode_percent_lenient(s)
-        if dec == s:
+        nxt = _decode_percent_lenient(out)
+        if nxt == out:
             break
-        s = dec
-    s = s.replace("\0", "").replace("\\", "/")
+        out = nxt
+    return out
+
+
+def _normalize_decoded_pathname(decoded_no_query: str) -> str:
+    s = str(decoded_no_query or "/").replace("\0", "").replace("\\", "/")
     if not s.startswith("/"):
         s = "/" + s
     s = "/".join(seg.split(";", 1)[0] for seg in s.split("/"))
@@ -218,62 +299,108 @@ def normalize_pathname(raw_url: str) -> str:
         s = "/" + s
     if len(s) > 1:
         s = s.rstrip("/")
-    s = s.replace("?", "%3F")
+    s = s.replace("?", "%3F").replace("|", "%7C")
     return s
+
+
+def normalize_pathname(raw_url: str) -> str:
+    s = _strip_scheme_and_authority(raw_url)
+    q_idx = s.find("?")
+    if q_idx >= 0:
+        s = s[:q_idx]
+    if not s:
+        return "/"
+    if _CLEAN_ASCII_PATH_RE.fullmatch(s):
+        return s[:-1] if len(s) > 1 and s.endswith("/") else s
+    return _normalize_decoded_pathname(_decode_percent_2(s))
 
 
 def _expand_path_candidates(raw_url: str) -> list[str]:
     raw = _strip_scheme_and_authority(raw_url)
     q_idx = raw.find("?")
     raw_path = raw[:q_idx] if q_idx >= 0 else raw
+    if _CLEAN_ASCII_PATH_RE.fullmatch(raw_path):
+        clean = raw_path[:-1] if len(raw_path) > 1 and raw_path.endswith("/") else (raw_path or "/")
+        return [clean]
+    seen_set: set[str] = set()
     seen: list[str] = []
 
-    def _add(val: str) -> None:
-        n1 = normalize_pathname(val)
-        n2 = _clean_path_no_collapse(val)
-        for cand in (n1, n2, _trim_segment_noise(n1), _trim_segment_noise(n2)):
-            if cand not in seen:
-                seen.append(cand)
+    def _push(cand: str) -> None:
+        if cand not in seen_set:
+            seen_set.add(cand)
+            seen.append(cand)
 
-    _add(raw_path)
+    def _add_raw(val: str) -> None:
+        n2 = _clean_path_no_collapse(val)
+        _push(n2)
+        _push(_trim_segment_noise(n2))
+
+    def _add_decoded(dec_val: str) -> None:
+        n1 = _normalize_decoded_pathname(dec_val)
+        n2 = _clean_path_no_collapse(dec_val)
+        _push(n1)
+        _push(n2)
+        _push(_trim_segment_noise(n1))
+        _push(_trim_segment_noise(n2))
+
+    _add_raw(raw_path)
     raw_h = raw_path.find("#")
     if raw_h >= 0:
-        _add(raw_path[:raw_h])
-    dec = raw_path
-    for _ in range(2):
-        nxt = _decode_percent_lenient(dec)
-        if nxt == dec:
-            break
-        dec = nxt
-    _add(dec)
+        raw_before = raw_path[:raw_h]
+        _add_raw(raw_before)
+        dec_before = _decode_percent_2(raw_before)
+        _add_decoded(dec_before)
+        dec_after = _decode_percent_2(raw_path[raw_h + 1 :])
+        dec = f"{dec_before}#{dec_after}"
+    else:
+        dec = _decode_percent_2(raw_path)
+    _add_decoded(dec)
     null_idx = dec.find("\0")
     if null_idx >= 0:
-        _add(dec[:null_idx])
+        _add_decoded(dec[:null_idx])
     dec_q = dec.find("?")
     if dec_q >= 0:
-        _add(dec[:dec_q])
+        _add_decoded(dec[:dec_q])
     dec_h = dec.find("#")
     if dec_h >= 0:
-        _add(dec[:dec_h])
+        _add_decoded(dec[:dec_h])
     return seen
 
 
-def is_path_protected(raw_url: str, protected_paths: list[str | re.Pattern] | None = None) -> bool:
-    rules = protected_paths or ["/api"]
+def _compile_protected_rules(protected_paths: list[str | re.Pattern] | None) -> tuple[bool, list[tuple]]:
+    raw_rules = protected_paths or ["/api"]
+    compiled: list[tuple] = []
+    for rule in raw_rules:
+        if isinstance(rule, re.Pattern):
+            compiled.append(("regex", rule, ""))
+        else:
+            raw_rule = str(rule).strip()
+            if raw_rule == "*":
+                return True, []
+            rl = normalize_pathname(raw_rule).lower()
+            if rl == "/":
+                return True, []
+            compiled.append(("prefix", rl, rl if rl.endswith("/") else rl + "/"))
+    return False, compiled
+
+
+def _matches_compiled_rules(raw_url: str, match_all: bool, compiled: list[tuple]) -> bool:
+    if match_all:
+        return True
     for norm in _expand_path_candidates(raw_url):
         low = norm.lower()
-        for rule in rules:
-            if isinstance(rule, re.Pattern):
-                if rule.search(norm):
+        for kind, a, b in compiled:
+            if kind == "regex":
+                if a.search(norm):
                     return True
-            else:
-                raw_rule = str(rule).strip()
-                if raw_rule == "*":
-                    return True
-                rl = normalize_pathname(raw_rule).lower()
-                if rl == "/" or low == rl or low.startswith(rl if rl.endswith("/") else rl + "/"):
-                    return True
+            elif low == a or low.startswith(b):
+                return True
     return False
+
+
+def is_path_protected(raw_url: str, protected_paths: list[str | re.Pattern] | None = None) -> bool:
+    match_all, compiled = _compile_protected_rules(protected_paths)
+    return _matches_compiled_rules(raw_url, match_all, compiled)
 
 
 @dataclass
@@ -284,32 +411,86 @@ class VeilBreakVerdict:
     threshold: int | float
     mode: str
     reasons: list[str] = field(default_factory=list)
+    cdp_active: bool = False
 
 
 def _normalize_mode(mode: str | None) -> str:
     m = str("strict" if mode is None else mode).strip().lower()
-    if m not in ("off", "monitor", "observe", "balanced", "strict"):
+    if m not in ("off", "monitor", "observe", "balanced", "strict", "paranoid"):
         raise ValueError(f"Unsupported VeilBreak mode: {mode}")
     return "monitor" if m == "observe" else m
 
 
-def _normalize_headers(headers: dict | None) -> dict[str, str]:
-    if not isinstance(headers, dict):
-        return {}
+_MAX_OVERRIDE_PARTS = 16
+
+
+def _append_override_candidates(dest: list[str], raw: object) -> bool:
+    if isinstance(raw, (list, tuple)):
+        for item in raw:
+            if _append_override_candidates(dest, item):
+                return True
+        return False
+    if not isinstance(raw, str):
+        return False
+    s = raw.strip()
+    if not s:
+        return False
+    if len(dest) >= _MAX_OVERRIDE_PARTS:
+        return True
+    dest.append(s)
+    if "," in s:
+        parts = s.split(",", _MAX_OVERRIDE_PARTS + 1)
+        if len(parts) > _MAX_OVERRIDE_PARTS + 1:
+            return True
+        seen = 0
+        for part in parts:
+            pt = part.strip()
+            if pt:
+                seen += 1
+                if seen > _MAX_OVERRIDE_PARTS or len(dest) >= _MAX_OVERRIDE_PARTS:
+                    return True
+                dest.append(pt)
+    return False
+
+
+def _normalize_headers_with_overrides(headers: object | None) -> tuple[dict[str, str], list[str], bool]:
+    if headers is None or not callable(getattr(headers, "items", None)):
+        return {}, [], False
     out: dict[str, str] = {}
+    override_urls: list[str] = []
+    override_excessive = False
     for k, v in headers.items():
         kl = str(k).lower()
+        if not override_excessive and kl in ("x-original-url", "x-rewrite-url"):
+            if _append_override_candidates(override_urls, v):
+                override_excessive = True
+        val = ", ".join("" if x is None else str(x) for x in v) if isinstance(v, (list, tuple)) else ("" if v is None else str(v))
         if kl in out:
-            continue
-        if isinstance(v, (list, tuple)):
-            out[kl] = ", ".join("" if x is None else str(x) for x in v)
+            if val:
+                out[kl] = f"{out[kl]}, {val}" if out[kl] else val
         else:
-            out[kl] = "" if v is None else str(v)
-    return out
+            out[kl] = val
+    return out, override_urls, override_excessive
 
 
-def is_automation_or_cli_ua(headers: dict | None) -> bool:
-    hdr = _normalize_headers(headers)
+def _normalize_headers(headers: object | None) -> dict[str, str]:
+    hdr, _, _ = _normalize_headers_with_overrides(headers)
+    return hdr
+
+
+def _is_ai_crawler_norm(hdr: dict[str, str]) -> bool:
+    ua = hdr.get("user-agent", "").strip()
+    sec_ch = hdr.get("sec-ch-ua", "")
+    if _AI_CRAWLER_UA_RE.search(ua) or _AI_CRAWLER_UA_RE.search(sec_ch):
+        return True
+    return any(k.startswith(_CRAWLER_HEADER_PREFIXES) for k in hdr)
+
+
+def is_ai_crawler_request(headers: object | None) -> bool:
+    return _is_ai_crawler_norm(_normalize_headers(headers))
+
+
+def _is_automation_or_cli_norm(hdr: dict[str, str]) -> bool:
     ua = hdr.get("user-agent", "").strip()
     sec_ch = hdr.get("sec-ch-ua", "")
     if not ua:
@@ -317,10 +498,108 @@ def is_automation_or_cli_ua(headers: dict | None) -> bool:
     return bool(_AUTOMATION_OR_CLI_UA_RE.search(ua) or re.search(r"HeadlessChrome", sec_ch, re.I))
 
 
+def is_automation_or_cli_ua(headers: object | None) -> bool:
+    return _is_automation_or_cli_norm(_normalize_headers(headers))
+
+
+_METHOD_OVERRIDE_HEADERS = ("x-http-method-override", "x-method-override", "x-http-method")
+
+
+def _has_method_override_conflict(hdr: dict[str, str], expected_method: str = "") -> bool:
+    exp_m = str(expected_method or "").strip().upper()
+    count = 0
+    for k in _METHOD_OVERRIDE_HEADERS:
+        val = hdr.get(k, "").strip().upper()
+        if not val:
+            continue
+        count += 1
+        if count > 1 or not exp_m or val != exp_m:
+            return True
+    return False
+
+
+_CHROME_VER_RE = re.compile(r"Chrome/([0-9]+)", re.I)
+_FIREFOX_VER_RE = re.compile(r"Firefox/([0-9]+)", re.I)
+
+
+def _parse_browser_major(pattern: re.Pattern[str], ua: str) -> int:
+    m = pattern.search(ua)
+    if not m:
+        return 0
+    digits = m.group(1).lstrip("0")
+    if not digits:
+        return 0
+    if len(digits) > 6:
+        return 999_999
+    return int(digits)
+
+
+def _evaluate_header_checks(
+    hdr: dict[str, str],
+    *,
+    enforcing: bool,
+    require_fetch_metadata: bool,
+    block_ai_crawlers: bool,
+    expected_method: str = "",
+    skip_header_checks: bool = False,
+) -> tuple[list[str], int, bool, bool, bool]:
+    ua = hdr.get("user-agent", "")
+    sec_ch_ua = hdr.get("sec-ch-ua", "")
+    sec_plat = hdr.get("sec-ch-ua-platform", "").replace('"', "").lower()
+    ua_linux = "Linux" in ua and "Android" not in ua
+    ua_win = "Windows NT" in ua
+    ua_mac = "Macintosh" in ua
+    reasons: list[str] = []
+    score = 0
+
+    if hdr.get("content-length") and hdr.get("transfer-encoding"):
+        reasons.append("CL_TE_SMUGGLING")
+        score += 10
+    if _has_method_override_conflict(hdr, expected_method):
+        reasons.append("METHOD_OVERRIDE_DENIED")
+        score += 6
+
+    chrome_major = _parse_browser_major(_CHROME_VER_RE, ua)
+    if not skip_header_checks:
+        sfs = hdr.get("sec-fetch-site", "").strip().lower()
+        sfm = hdr.get("sec-fetch-mode", "").strip().lower()
+        if any(ph in hdr for ph in _PROXY_LEAK_HEADERS):
+            reasons.append("PROXY_HEADER_LEAK")
+            score += 6
+        if block_ai_crawlers and _is_ai_crawler_norm(hdr):
+            reasons.append("AI_CRAWLER_OR_SCRAPER_DENIED")
+            score += 6
+        is_cli = _is_automation_or_cli_norm(hdr)
+        if enforcing and is_cli:
+            reasons.append("AUTOMATION_UA_DENIED")
+            score += 6
+        if "cross-site" in sfs:
+            reasons.append("CROSS_SITE_REQUEST_DENIED")
+            score += 6
+        ff_major = _parse_browser_major(_FIREFOX_VER_RE, ua)
+        claims_modern = (chrome_major >= 80) or (ff_major >= 90)
+        if require_fetch_metadata and claims_modern and not is_cli:
+            if not sfs or sfs not in ("same-origin", "same-site") or not sfm:
+                reasons.append("FETCH_METADATA_MISSING")
+                score += 4
+
+    if sec_plat and (
+        (ua_linux and sec_plat in ("windows", "macos"))
+        or (ua_win and sec_plat in ("linux", "macos"))
+        or (ua_mac and sec_plat in ("windows", "linux"))
+    ):
+        reasons.append("OS_HEADER_CONTRADICTION")
+        score += 4
+    if chrome_major >= 115 and '" Not A;Brand";v="99"' in sec_ch_ua:
+        reasons.append("SEC_CH_UA_GREASE_LIE")
+        score += 2
+    return reasons, score, ua_linux, ua_win, ua_mac
+
+
 def verify_attestation(
     *,
     mode: str | None = "strict",
-    headers: dict | None,
+    headers: object | None,
     attest: dict | str | None,
     ticket: str = "",
     nonce: str = "",
@@ -329,73 +608,44 @@ def verify_attestation(
     expected_method: str = "",
     expected_path: str = "",
     require_fetch_metadata: bool = False,
+    block_ai_crawlers: bool | None = None,
+    anti_cdp: bool | None = None,
+    allow_devtools: bool | None = None,
+    _headers_normalized: bool = False,
 ) -> VeilBreakVerdict:
     m = _normalize_mode(mode)
-    threshold: int | float = 2 if m == "strict" else (4 if m == "balanced" else math.inf)
+    threshold: int | float = 2 if m in ("strict", "paranoid") else (4 if m == "balanced" else math.inf)
     if m == "off":
         return VeilBreakVerdict(True, False, 0, threshold, m)
 
-    hdr = _normalize_headers(headers)
-    ua = hdr.get("user-agent", "")
-    sec_ch_ua = hdr.get("sec-ch-ua", "")
-    sec_plat = hdr.get("sec-ch-ua-platform", "").replace('"', "").lower()
-    sfs = hdr.get("sec-fetch-site", "").strip().lower()
-    sfm = hdr.get("sec-fetch-mode", "").strip().lower()
-    reasons: list[str] = []
-    score = 0
-
-    if hdr.get("content-length") and hdr.get("transfer-encoding"):
-        reasons.append("CL_TE_SMUGGLING")
-        score += 10
-    if any(ph in hdr for ph in _PROXY_LEAK_HEADERS):
-        reasons.append("PROXY_HEADER_LEAK")
-        score += 6
-
-    is_cli = is_automation_or_cli_ua(hdr)
-    if m in ("strict", "balanced") and is_cli:
-        reasons.append("AUTOMATION_UA_DENIED")
-        score += 6
-
-    if "cross-site" in sfs:
-        reasons.append("CROSS_SITE_REQUEST_DENIED")
-        score += 6
-
-    chrome_ver = re.search(r"Chrome/(\d+)", ua, re.I)
-    ff_ver = re.search(r"Firefox/(\d+)", ua, re.I)
-    claims_modern = (chrome_ver is not None and int(chrome_ver.group(1)) >= 80) or (
-        ff_ver is not None and int(ff_ver.group(1)) >= 90
+    enforcing = m in ("strict", "balanced", "paranoid")
+    check_crawlers = (m != "off") if block_ai_crawlers is None else bool(block_ai_crawlers)
+    eff_anti_cdp = (m != "off") if anti_cdp is None else bool(anti_cdp)
+    allow_dt = (m not in ("strict", "paranoid")) if allow_devtools is None else bool(allow_devtools)
+    cdp_weight = _cdp_weight_for(m, anti_cdp=eff_anti_cdp, allow_devtools=allow_dt)
+    hdr = headers if (_headers_normalized and isinstance(headers, dict)) else _normalize_headers(headers)
+    reasons, score, ua_linux, ua_win, ua_mac = _evaluate_header_checks(
+        hdr,
+        enforcing=enforcing,
+        require_fetch_metadata=require_fetch_metadata,
+        block_ai_crawlers=check_crawlers,
+        expected_method=expected_method,
+        skip_header_checks=False,
     )
-    if require_fetch_metadata and claims_modern and not is_cli:
-        if not sfs or sfs not in ("same-origin", "same-site") or not sfm:
-            reasons.append("FETCH_METADATA_MISSING")
-            score += 4
-
-    ua_linux = "Linux" in ua and "Android" not in ua
-    ua_win = "Windows NT" in ua
-    ua_mac = "Macintosh" in ua
-    if sec_plat:
-        if (
-            (ua_linux and sec_plat in ("windows", "macos"))
-            or (ua_win and sec_plat in ("linux", "macos"))
-            or (ua_mac and sec_plat in ("windows", "linux"))
-        ):
-            reasons.append("OS_HEADER_CONTRADICTION")
-            score += 4
-
-    if chrome_ver and int(chrome_ver.group(1)) >= 115 and '" Not A;Brand";v="99"' in sec_ch_ua:
-        reasons.append("SEC_CH_UA_GREASE_LIE")
-        score += 2
 
     att_obj = attest
     if isinstance(att_obj, str):
-        stripped = att_obj.strip()
-        if not stripped:
-            att_obj = None
+        if len(att_obj) > 8192:
+            att_obj = {"invalid": True}
         else:
-            try:
-                att_obj = json.loads(stripped)
-            except Exception:
-                att_obj = {"invalid": True}
+            stripped = att_obj.strip()
+            if not stripped:
+                att_obj = None
+            else:
+                try:
+                    att_obj = json.loads(stripped)
+                except Exception:
+                    att_obj = {"invalid": True}
 
     tk_str = "" if ticket is None else str(ticket)
     nn_str = "" if nonce is None else str(nonce)
@@ -409,7 +659,7 @@ def verify_attestation(
     exp_path = normalize_pathname(expected_path) if expected_path else ""
 
     if att_obj is None:
-        if m in ("strict", "balanced"):
+        if enforcing:
             reasons.append("ATTEST_REQUIRED")
             score += 6
     elif not isinstance(att_obj, dict):
@@ -421,15 +671,20 @@ def verify_attestation(
         s = att_obj.get("s")
         f = att_obj.get("f")
         p_raw = att_obj.get("p")
-        p = ("" if p_raw is None else str(p_raw))[:48]
+        w_raw = att_obj.get("w")
+        m_raw = att_obj.get("m")
+        u_raw = att_obj.get("u")
+        valid_str_types = all(x is None or isinstance(x, str) for x in (p_raw, w_raw, m_raw, u_raw))
+        p = p_raw[:48] if isinstance(p_raw, str) else ""
         d = att_obj.get("d") if isinstance(att_obj.get("d"), str) else ""
-        w = "" if att_obj.get("w") is None else str(att_obj.get("w"))
-        att_m = "" if att_obj.get("m") is None else str(att_obj.get("m")).strip().upper()
-        att_u = "" if att_obj.get("u") is None else str(att_obj.get("u"))
+        w = w_raw if isinstance(w_raw, str) else ""
+        att_m = m_raw.strip().upper() if isinstance(m_raw, str) else ""
+        att_u = u_raw if isinstance(u_raw, str) else ""
 
         valid_v = (not has_v) or (isinstance(v, int) and not isinstance(v, bool) and v == 2)
         valid_nums = (
-            valid_v
+            valid_str_types
+            and valid_v
             and isinstance(s, int)
             and not isinstance(s, bool)
             and 0 <= s <= 10_000
@@ -439,7 +694,7 @@ def verify_attestation(
         )
         valid_delims = all("|" not in x for x in (tk_str, nn_str, p, w, att_m, att_u))
         valid_hex = bool(re.fullmatch(r"[0-9a-fA-F]{64}", d))
-        coherent_flag_score = valid_nums and (s >= _min_score_for_flags(f))
+        coherent_flag_score = valid_nums and (s >= _min_score_for_flags(f, cdp_weight))
         valid_nonce = (not exp_chal) or bool(re.fullmatch(r"[A-Za-z0-9_-]{8,64}", nn_str))
 
         if not (valid_nums and valid_delims and valid_hex and coherent_flag_score and valid_nonce):
@@ -487,15 +742,149 @@ def verify_attestation(
             "ATTEST_INVALID",
             "ATTEST_DIGEST_MISMATCH",
             "AUTOMATION_UA_DENIED",
+            "AI_CRAWLER_OR_SCRAPER_DENIED",
             "POW_INVALID",
             "REQUEST_BINDING_MISMATCH",
             "CROSS_SITE_REQUEST_DENIED",
             "CL_TE_SMUGGLING",
+            "METHOD_OVERRIDE_DENIED",
             "PROXY_HEADER_LEAK",
+        )
+    ) or (m == "paranoid" and eff_anti_cdp and not allow_dt and "CDP_RUNTIME_ENABLE" in reasons)
+    blocked = m != "monitor" and (score >= threshold or hard_fail)
+    return VeilBreakVerdict(not blocked, blocked, score, threshold, m, reasons)
+
+
+def verify_handshake_proof(
+    *,
+    mode: str | None = "strict",
+    headers: object | None,
+    proof: dict | None,
+    expected_challenge: str = "",
+    require_fetch_metadata: bool | None = None,
+    block_ai_crawlers: bool | None = None,
+    anti_cdp: bool | None = None,
+    allow_devtools: bool | None = None,
+    skip_header_checks: bool = False,
+) -> VeilBreakVerdict:
+    m = _normalize_mode(mode)
+    threshold: int | float = 2 if m in ("strict", "paranoid") else (4 if m == "balanced" else math.inf)
+    if m == "off":
+        return VeilBreakVerdict(True, False, 0, threshold, m, cdp_active=False)
+    enforcing = m in ("strict", "balanced", "paranoid")
+    req_fm = (m in ("strict", "paranoid")) if require_fetch_metadata is None else bool(require_fetch_metadata)
+    check_crawlers = True if block_ai_crawlers is None else bool(block_ai_crawlers)
+    eff_anti_cdp = (m != "off") if anti_cdp is None else bool(anti_cdp)
+    allow_dt = (m not in ("strict", "paranoid")) if allow_devtools is None else bool(allow_devtools)
+    cdp_weight = _cdp_weight_for(m, anti_cdp=eff_anti_cdp, allow_devtools=allow_dt)
+    hdr = _normalize_headers(headers)
+    reasons, score, ua_linux, ua_win, ua_mac = _evaluate_header_checks(
+        hdr,
+        enforcing=enforcing,
+        require_fetch_metadata=req_fm,
+        block_ai_crawlers=check_crawlers,
+        expected_method="",
+        skip_header_checks=bool(skip_header_checks),
+    )
+
+    cdp_active = False
+    exp_chal = str(expected_challenge or "")
+    if proof is None:
+        if enforcing:
+            reasons.append("BROWSER_PROOF_REQUIRED")
+            score += 6
+    elif not isinstance(proof, dict):
+        reasons.append("BROWSER_PROOF_INVALID")
+        score += 6
+    else:
+        v = proof.get("v")
+        ch_raw = proof.get("ch")
+        p_raw = proof.get("p")
+        wr_raw = proof.get("wr")
+        valid_str_types = all(x is None or isinstance(x, str) for x in (ch_raw, p_raw, wr_raw))
+        ch = ch_raw if isinstance(ch_raw, str) else ""
+        s = proof.get("s")
+        f = proof.get("f")
+        p = p_raw[:48] if isinstance(p_raw, str) else ""
+        cdp = proof.get("cdp")
+        wr = wr_raw[:64] if isinstance(wr_raw, str) else ""
+        wk = proof.get("wk")
+        ms = proof.get("ms")
+        d = proof.get("d") if isinstance(proof.get("d"), str) else ""
+        valid = (
+            valid_str_types
+            and isinstance(v, int) and not isinstance(v, bool) and v == 3
+            and isinstance(s, int) and not isinstance(s, bool) and 0 <= s <= 10_000
+            and isinstance(f, int) and not isinstance(f, bool) and 0 <= f <= _DEFINED_FLAG_MASK
+            and isinstance(cdp, int) and not isinstance(cdp, bool) and cdp in (0, 1)
+            and isinstance(wk, int) and not isinstance(wk, bool) and wk in (0, 1)
+            and isinstance(ms, int) and not isinstance(ms, bool) and 0 <= ms <= 60_000
+            and bool(re.fullmatch(r"[0-9a-fA-F]{64}", d))
+            and all("|" not in x for x in (ch, p, wr))
+            and s >= _min_score_for_flags(f, cdp_weight)
+        )
+        if not valid:
+            reasons.append("BROWSER_PROOF_INVALID")
+            score += 6
+        elif (enforcing and not ch) if not exp_chal else (not hmac.compare_digest(ch.encode("utf-8"), exp_chal.encode("utf-8"))):
+            reasons.append("BROWSER_PROOF_CHALLENGE_MISMATCH")
+            score += 6
+        else:
+            expected_d = _sha256_hex(f"VB_HS_V3|{ch}|{s}|{f}|{p}|{cdp}|{wr}|{wk}|{ms}")
+            if not hmac.compare_digest(d.lower(), expected_d):
+                reasons.append("BROWSER_PROOF_DIGEST_MISMATCH")
+                score += 6
+            auto_cdp = (f & ((1 << 6) | (1 << 8))) != 0
+            runtime_cdp = (f & (1 << 7)) != 0
+            cdp_active = (cdp == 1) or auto_cdp or runtime_cdp
+            score += s
+            if cdp == 1 and not auto_cdp and not runtime_cdp and eff_anti_cdp and cdp_weight > 0:
+                score += cdp_weight
+                reasons.append("CDP_RUNTIME_ENABLE")
+            for rname in decode_flags(f):
+                if rname not in reasons:
+                    reasons.append(rname)
+            if s >= threshold:
+                reasons.append("BROWSER_INVARIANTS_FAILED")
+            if (
+                (ua_linux and (p.startswith("Win") or p == "MacIntel"))
+                or (ua_win and (p.startswith("Linux") or p == "MacIntel"))
+                or (ua_mac and (p.startswith("Win") or p.startswith("Linux")))
+            ):
+                reasons.append("OS_PLATFORM_CONTRADICTION")
+                score += 4
+            if (ua_linux or ua_win or ua_mac) and not p and m in ("strict", "paranoid"):
+                reasons.append("OS_PLATFORM_CONTRADICTION")
+                score += 4
+            if wr and (
+                (ua_win and re.search(r"Intel Iris OpenGL Engine|Apple GPU|Apple M[0-9]", wr, re.I))
+                or ((ua_linux or ua_mac) and re.search(r"Direct3D11|D3D11|Direct3D9", wr, re.I))
+            ):
+                reasons.append("WEBGL_HARDWARE_COHERENCE_LIE")
+                score += 4
+            if m == "paranoid" and eff_anti_cdp and (auto_cdp or (not allow_dt and cdp_active)):
+                if "CDP_ACTIVE_DENIED" not in reasons:
+                    reasons.append("CDP_ACTIVE_DENIED")
+                score += 6
+
+    hard_fail = any(
+        r in reasons
+        for r in (
+            "BROWSER_PROOF_REQUIRED",
+            "BROWSER_PROOF_INVALID",
+            "BROWSER_PROOF_CHALLENGE_MISMATCH",
+            "BROWSER_PROOF_DIGEST_MISMATCH",
+            "AUTOMATION_UA_DENIED",
+            "AI_CRAWLER_OR_SCRAPER_DENIED",
+            "CROSS_SITE_REQUEST_DENIED",
+            "CL_TE_SMUGGLING",
+            "METHOD_OVERRIDE_DENIED",
+            "PROXY_HEADER_LEAK",
+            "CDP_ACTIVE_DENIED",
         )
     )
     blocked = m != "monitor" and (score >= threshold or hard_fail)
-    return VeilBreakVerdict(not blocked, blocked, score, threshold, m, reasons)
+    return VeilBreakVerdict(not blocked, blocked, score, threshold, m, reasons, cdp_active=cdp_active)
 
 
 class VeilBreakTicketStore:
@@ -511,8 +900,12 @@ class VeilBreakTicketStore:
         ticket_ttl_ms: int = 60_000,
         max_tickets: int = 30_000,
         ticket_pow_bits: int | None = None,
-        bind_ip: bool = True,
+        bind_ip: bool | None = None,
         require_fetch_metadata: bool | None = None,
+        block_ai_crawlers: bool | None = None,
+        anti_cdp: bool | None = None,
+        allow_devtools: bool | None = None,
+        protected_paths: list[str | re.Pattern] | None = None,
     ) -> None:
         self.mode = _normalize_mode(mode)
         if (
@@ -525,25 +918,40 @@ class VeilBreakTicketStore:
         if not isinstance(max_tickets, int) or isinstance(max_tickets, bool) or max_tickets < 1:
             raise ValueError("max_tickets must be a positive integer")
         if ticket_pow_bits is None:
-            self.ticket_pow_bits = 12 if self.mode == "strict" else (10 if self.mode == "balanced" else 0)
+            self.ticket_pow_bits = (
+                14 if self.mode == "paranoid" else (12 if self.mode == "strict" else (10 if self.mode == "balanced" else 0))
+            )
         else:
             if not isinstance(ticket_pow_bits, int) or isinstance(ticket_pow_bits, bool) or not (0 <= ticket_pow_bits <= 22):
                 raise ValueError("ticket_pow_bits must be an integer in 0..22")
             self.ticket_pow_bits = ticket_pow_bits
-        self.bind_ip = bool(bind_ip)
-        self.require_fetch_metadata = (self.mode == "strict") if require_fetch_metadata is None else bool(require_fetch_metadata)
+        self.bind_ip = (self.mode in ("strict", "paranoid")) if bind_ip is None else bool(bind_ip)
+        self.require_fetch_metadata = (
+            (self.mode in ("strict", "paranoid")) if require_fetch_metadata is None else bool(require_fetch_metadata)
+        )
+        self.block_ai_crawlers = (self.mode != "off") if block_ai_crawlers is None else bool(block_ai_crawlers)
+        self.anti_cdp = (self.mode != "off") if anti_cdp is None else bool(anti_cdp)
+        self.allow_devtools = (self.mode not in ("strict", "paranoid")) if allow_devtools is None else bool(allow_devtools)
+        self.protected_paths = list(protected_paths) if protected_paths is not None else None
+        self._protected_compiled = _compile_protected_rules(self.protected_paths) if self.protected_paths is not None else None
         self.ticket_ttl_ms = ticket_ttl_ms
         self.max_tickets = max_tickets
         self._tickets: dict[str, dict] = {}
         self._lock = threading.Lock()
 
+    def _prune_expired_unlocked(self, now: float) -> None:
+        while self._tickets:
+            k, rec = next(iter(self._tickets.items()))
+            if rec["exp"] <= now:
+                self._tickets.pop(k, None)
+            else:
+                break
+
     def mint_ticket_challenge(self, *, ip: str = "127.0.0.1", user_agent: str = "") -> dict | None:
         with self._lock:
             now = time.time() * 1000.0
             if len(self._tickets) >= self.max_tickets:
-                expired = [k for k, rec in self._tickets.items() if rec["exp"] <= now]
-                for k in expired:
-                    self._tickets.pop(k, None)
+                self._prune_expired_unlocked(now)
                 if len(self._tickets) >= self.max_tickets:
                     return None
             tk = secrets.token_hex(16)
@@ -562,9 +970,7 @@ class VeilBreakTicketStore:
         with self._lock:
             now = time.time() * 1000.0
             if len(self._tickets) >= self.max_tickets:
-                expired = [k for k, rec in self._tickets.items() if rec["exp"] <= now]
-                for k in expired:
-                    self._tickets.pop(k, None)
+                self._prune_expired_unlocked(now)
                 if len(self._tickets) >= self.max_tickets:
                     return None
             tk = secrets.token_hex(16)
@@ -590,12 +996,14 @@ class VeilBreakTicketStore:
     def verify_request(
         self,
         *,
-        headers: dict | None,
+        headers: object | None,
         ip: str = "127.0.0.1",
         method: str = "",
         path: str = "",
     ) -> VeilBreakVerdict:
-        hdr = _normalize_headers(headers)
+        if self.mode == "off":
+            return VeilBreakVerdict(True, False, 0, math.inf, self.mode)
+        hdr, override_urls, override_excessive = _normalize_headers_with_overrides(headers)
         ticket = hdr.get("x-vb-ticket", "")
         nonce = hdr.get("x-vb-nonce", "")
         attest = hdr.get("x-vb-attest")
@@ -608,11 +1016,25 @@ class VeilBreakTicketStore:
             nonce=nonce,
             expected_challenge=rec["challenge"] if rec else "",
             expected_difficulty=rec["difficulty"] if rec else 0,
-            expected_method=method if (rec and rec["challenge"]) else "",
+            expected_method=method,
             expected_path=path if (rec and rec["challenge"]) else "",
-            require_fetch_metadata=self.require_fetch_metadata and bool(rec and rec["challenge"]),
+            require_fetch_metadata=self.require_fetch_metadata and (rec is None or bool(rec["challenge"])),
+            block_ai_crawlers=self.block_ai_crawlers,
+            anti_cdp=self.anti_cdp,
+            allow_devtools=self.allow_devtools,
+            _headers_normalized=True,
         )
-        if self.mode in ("strict", "balanced"):
+        ov_hit = bool(override_excessive or override_urls)
+        if ov_hit and not override_excessive and self._protected_compiled is not None:
+            match_all, compiled = self._protected_compiled
+            ov_hit = any(_matches_compiled_rules(u, match_all, compiled) for u in override_urls)
+        if ov_hit:
+            verdict.score += 6
+            verdict.reasons.append("PROXY_PATH_OVERRIDE_HEADER")
+            if self.mode != "monitor":
+                verdict.blocked = True
+                verdict.ok = False
+        if self.mode in ("strict", "balanced", "paranoid"):
             if not rec:
                 verdict.blocked = True
                 verdict.ok = False

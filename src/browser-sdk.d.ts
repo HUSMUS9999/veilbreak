@@ -7,6 +7,13 @@ export interface BuildBrowserGateOptions {
   protectedRules?: Array<string | RegExp | { regex: string; flags: string }> | null;
   autoBlockPage?: boolean;
   antiCdp?: boolean;
+  allowDevTools?: boolean;
+  unified?: boolean;
+  embedded?: boolean;
+  includeTicketPow?: boolean;
+  sri?: boolean;
+  userGestureWindowMs?: number;
+  allowBlockPageOverridePath?: string;
 }
 
 export interface BuildPlaygroundOptions {

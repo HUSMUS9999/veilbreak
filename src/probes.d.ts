@@ -1,5 +1,5 @@
-export type VeilBreakMode = "off" | "monitor" | "observe" | "balanced" | "strict";
-export type NormalizedVeilBreakMode = "off" | "monitor" | "balanced" | "strict";
+import type { NormalizedVeilBreakMode, VeilBreakMode, VeilBreakPreset } from "./presets.js";
+export type { NormalizedVeilBreakMode, VeilBreakMode, VeilBreakPreset } from "./presets.js";
 
 export interface VeilBreakFlags {
   readonly CANVAS2D_NOISE: number;
@@ -17,8 +17,10 @@ export interface VeilBreakFlags {
   readonly VIEWPORT_IMPOSSIBILITY: number;
   readonly ENGINE_COHERENCE_LIE: number;
   readonly SYNTHETIC_INTERACTION: number;
+  readonly CDP_SOFT_RENDERER: number;
 }
 
+export const PROXY_LEAK_HEADERS: readonly string[];
 export const FLAG: Readonly<VeilBreakFlags>;
 
 export interface VeilBreakInteraction {
@@ -36,6 +38,7 @@ export interface VeilBreakTelemetry {
   freshIframeWebdriver?: boolean;
   automationGlobalArtifact?: boolean;
   cdpRuntimeEnable?: boolean;
+  softwareWebglHeadless?: boolean;
   webdriverGetterSpoofed?: boolean;
   nativeFunctionTampered?: boolean;
   workerRealmContradiction?: boolean;
@@ -64,6 +67,7 @@ export interface VeilBreakVerdict {
   reasons: string[];
   flags?: number;
   platform?: string;
+  cdpActive?: boolean;
 }
 
 export interface VeilBreakAttestation {
@@ -79,18 +83,36 @@ export interface VeilBreakAttestation {
   blocked?: boolean;
 }
 
+export interface VeilBreakHandshakeProof {
+  v: 3;
+  ch: string;
+  s: number;
+  f: number;
+  p: string;
+  cdp: 0 | 1;
+  wr: string;
+  wk: 0 | 1;
+  ms: number;
+  d: string;
+}
+
 export function decodeFlags(flags: number): string[];
-export function normalizeMode(mode?: VeilBreakMode | (string & {})): NormalizedVeilBreakMode;
+export { normalizeMode, resolvePreset } from "./presets.js";
 export function thresholdForMode(mode?: VeilBreakMode | (string & {})): number;
 export function sha256Hex(input: Buffer | ArrayBufferView | string): string;
 export function isAutomationOrCliUa(headers?: Record<string, string | string[] | undefined>): boolean;
+export function isAiCrawlerRequest(headers?: Record<string, string | string[] | undefined>): boolean;
 export function verifyPowSolution(ticket: string, challenge: string, powNonce: string, difficulty: number): boolean;
 export function solvePowChallenge(ticket: string, challenge: string, difficulty: number): string;
 export function normalizePathname(rawUrl: string): string;
 export function stripSchemeAndAuthority(rawUrl: string): string;
 export function expandPathCandidates(rawUrl: string): string[];
-export function isProtectedPath(rawUrl: string, protectedPaths: Array<string | RegExp>): boolean;
-export function evaluateTelemetry(telemetry?: VeilBreakTelemetry, opts?: { mode?: VeilBreakMode; antiCdp?: boolean }): VeilBreakVerdict;
+export function normalizeProtectedPaths(protectedPaths?: Array<string | RegExp>): Array<string | RegExp>;
+export function isProtectedPath(rawUrl: string, protectedPaths?: Array<string | RegExp>, preNormalized?: boolean): boolean;
+export function evaluateTelemetry(
+  telemetry?: VeilBreakTelemetry,
+  opts?: { mode?: VeilBreakMode; antiCdp?: boolean; allowDevTools?: boolean }
+): VeilBreakVerdict;
 export function evaluateInteraction(interaction?: VeilBreakInteraction, opts?: { mode?: VeilBreakMode }): VeilBreakVerdict;
 export function buildAttestation(opts?: {
   mode?: VeilBreakMode;
@@ -98,6 +120,7 @@ export function buildAttestation(opts?: {
   nonce?: string;
   telemetry?: VeilBreakTelemetry;
   antiCdp?: boolean;
+  allowDevTools?: boolean;
   challenge?: string;
   difficulty?: number;
   powNonce?: string | null;
@@ -115,4 +138,27 @@ export function verifyAttestation(opts?: {
   expectedMethod?: string;
   expectedPath?: string;
   requireFetchMetadata?: boolean;
+  blockAiCrawlers?: boolean;
+  antiCdp?: boolean;
+  allowDevTools?: boolean;
+}): VeilBreakVerdict;
+export function buildHandshakeProof(opts?: {
+  mode?: VeilBreakMode;
+  challenge?: string;
+  telemetry?: VeilBreakTelemetry;
+  antiCdp?: boolean;
+  allowDevTools?: boolean;
+  workerOk?: boolean;
+  probeMs?: number;
+}): VeilBreakHandshakeProof | null;
+export function verifyHandshakeProof(opts?: {
+  mode?: VeilBreakMode;
+  headers?: Record<string, string | string[] | undefined>;
+  proof?: VeilBreakHandshakeProof | unknown;
+  expectedChallenge?: string;
+  requireFetchMetadata?: boolean;
+  blockAiCrawlers?: boolean;
+  antiCdp?: boolean;
+  allowDevTools?: boolean;
+  skipHeaderChecks?: boolean;
 }): VeilBreakVerdict;

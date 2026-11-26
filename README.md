@@ -9,8 +9,8 @@
 <h1 align="center">VeilBreak</h1>
 
 <p align="center">
-  <a href="#live-19-browser-benchmark"><img src="assets/badges/version.svg" alt="version: 2.1.0" /></a>
-  <a href="docs/invariants-and-threat-model.md"><img src="assets/badges/invariants.svg" alt="invariants: 14 + kinematics" /></a>
+  <a href="#live-19-browser-benchmark"><img src="assets/badges/version.svg" alt="version: 2.2.0" /></a>
+  <a href="docs/invariants-and-threat-model.md"><img src="assets/badges/invariants.svg" alt="invariants: 15 + kinematics" /></a>
   <a href="#live-19-browser-benchmark"><img src="assets/badges/engines.svg" alt="engines: Chromium + Gecko" /></a>
   <a href="#quickstart"><img src="assets/badges/deps.svg" alt="deps: 0" /></a>
   <a href="LICENSE"><img src="assets/badges/license.svg" alt="license: MIT" /></a>
@@ -20,25 +20,25 @@
   <a href="#live-19-browser-benchmark">Benchmark</a> &middot;
   <a href="#quickstart">Quickstart</a> &middot;
   <a href="#architecture">Architecture</a> &middot;
-  <a href="#modes--honest-boundaries">Modes &amp; Boundaries</a> &middot;
+  <a href="#modes--honest-boundaries">Presets &amp; Boundaries</a> &middot;
   <a href="#documentation--ecosystem">Docs</a>
 </p>
 
-**VeilBreak** is a zero-dependency browser integrity SDK (`fetch` + `XMLHttpRequest`), `<veil-break>` closed Shadow DOM Web Component, reverse-proxy middleware, and thread-safe pure-stdlib Python verifier for detecting and blocking `curl`, HTTP repeaters, headless automation, CDP-patched forks, JS-spoofed plugins, and C++-patched anti-detect browsers across Chromium and Gecko engines.
+**VeilBreak** is a zero-dependency browser integrity SDK (`fetch` + `XMLHttpRequest`), `<veil-break>` closed Shadow DOM Web Component, reverse-proxy middleware, unified **ProxySnare** browser-proof provider (`VB_HS_V3`), and thread-safe pure-stdlib Python verifier for detecting and blocking `curl`, Firecrawl/AI scrapers, headless automation, active CDP sessions, CDP-patched forks, JS-spoofed plugins, and C++-patched anti-detect browsers across Chromium and Gecko engines.
 
 ## Problem & Solution
 
-**Problem:** Modern stealth browsers, CDP-patched automation forks, and JS evasion plugins strip `navigator.webdriver`, hide `Runtime.enable` traps, and forge User-Agent and GPU strings directly inside C++ or injected wrappers. Naive bot detectors either miss them or block unmodified desktop Chrome and Firefox visitors.
+**Problem:** Modern stealth browsers, Firecrawl/Browserless scraping clouds, CDP-patched automation forks, and JS evasion plugins strip `navigator.webdriver`, hide `Runtime.enable` traps, and forge User-Agent and GPU strings directly inside C++ or injected wrappers. Naive bot detectors either miss them or block legitimate desktop, mobile, Brave, Safari, accessibility, and developer visitors.
 
-**Solution:** VeilBreak checks properties stealth frameworks struggle to keep consistent across layers: 14 cross-engine graphics, audio, font, viewport, fresh-`iframe`, and `Web Worker` invariants paired with Stage-2 click kinematics and IP+UA+PoW+method/path-bound single-use server tickets (`VB_ATTEST_V2`). In our live 19-browser Linux benchmark (`mode=strict`), both clean desktop controls passed (`0` score) while `15/17` automated/stealth browsers were blocked passively at Stage 1 and `17/17` were blocked when combined with Stage-2 click kinematics.
+**Solution:** VeilBreak checks properties stealth frameworks struggle to keep consistent across layers: **15 cross-engine graphics, audio, font, viewport, software-WebGL, active-CDP, fresh-`iframe`, and `Web Worker` invariants** paired with Stage-2 click kinematics, Firecrawl/AI-crawler blocking, static SRI (`?v=<hash12>`), and IP+UA+PoW+method/path-bound single-use server tickets (`VB_ATTEST_V2`) — or zero-extra-round-trip `VB_HS_V3` handshake proofs inside ProxySnare's `createUnifiedShield`. Five adjustable presets (`off`, `monitor`/`observe`, `balanced`, `strict`, `paranoid`) let every team tune the exact availability-vs-security balance.
 
 ## Features
 
-- **14 Cross-Engine Physics & Coherence Invariants**: Checks Canvas2D / `OffscreenCanvas` solid-fill noise & repeat determinism, WebGL dither-free `gl.clear(128/255)` readback & GPU hardware coherence, silent `OfflineAudioContext` noise, CSP-safe integer-DPR `DOMRect` poisoning, OS core font presence, viewport geometry impossibilities (notch/PWA/F11-safe), and permissions coherence.
-- **Cross-Realm & Web Worker Verification**: Uses a fresh untouched `iframe` realm (Proxy-throw-aware native checks) and a dedicated `Web Worker` (`OffscreenCanvas` + `self.navigator`) to expose main-thread JS stealth wrappers and spoofed native getters.
-- **Stage-2 Click Kinematics**: Flags untrusted synthetic DOM clicks (`isTrusted === false`) and programmatic CDP/Juggler teleport clicks (`<= 3` pointer moves, `< 12 ms` `pointerdown`→`click` dwell, dead-center hit), while exempting trusted keyboard activation (`Enter`/`Space`), trackpad taps, and `touch`/`pen` pointers.
-- **Hardened IP + UA + PoW + Method/Path-Bound One-Time Tickets (`VB_ATTEST_V2`)**: `/__veilbreak/ticket` enforces CLI/proxy/automation UA denial, Fetch Metadata (`Sec-Fetch-Site`/`Sec-Fetch-Mode`), `Accept-Language`, and per-IP rate limits (`429`); protected API requests must present a single-use ticket, solve a lightweight `VB_POW_V2` SHA-256 PoW (`12`-bit strict / `10`-bit balanced), and bind `(challenge, powNonce, method, normalizedPath)` into the SHA-256 attestation digest.
-- **Full `fetch()` + `XMLHttpRequest` Auto-Instrumentation & Modular Exports**: `gate.js` transparently instruments both `window.fetch()` (including same-origin `GET`/`HEAD` `302` redirect re-attestation) and async `XMLHttpRequest` (Axios, jQuery, HTMX, Angular HttpClient, with clean `abort()` recovery), provides `<veil-break>` closed Shadow DOM gating (React 18 reconnect-safe), exports modular subpaths (`veilbreak/probes`, `veilbreak/middleware`, `veilbreak/browser-sdk`, `veilbreak/nl`) with bundled `.d.ts` types, and maintains full parity with `python/veilbreak.py`.
+- **15 Cross-Engine Physics, Active CDP & Headless-Cloud Invariants**: Checks Canvas2D / `OffscreenCanvas` solid-fill noise & repeat determinism, WebGL dither-free `gl.clear(128/255)` readback & GPU hardware coherence, corroborated headless software WebGL (`SwiftShader`/`llvmpipe` + CDP/automation), preset-weighted active CDP fingerprinting (`cdpActive`, native `console.debug` verified so Sentry/Datadog RUM never false-positives), silent `OfflineAudioContext` noise, zoom-safe `DOMRect` poisoning, accessibility/RFP-safe OS core font presence, Wayland/compact-safe viewport geometry, and permissions coherence.
+- **Zero-FP Privacy, Accessibility & Mobile Engineering**: Exempts clean native Brave Shields deterministic LSB farbling, Safari zoom, Firefox custom-font accessibility & RFP, Linux Wayland, VoiceOver/NVDA/JAWS screen readers, MacBook touchpad taps, and Sentry/Datadog wrapped `console.debug`; honors Express `app.set("trust proxy", ...)`; automatically retries `X-VB-Retry-Ticket: 1` on mobile Wi-Fi↔5G IP roaming and same-origin `GET`/`HEAD` redirects in both `fetch()` and `XMLHttpRequest`.
+- **Firecrawl & AI-Crawler Denial + Unified `VB_HS_V3` Bridge**: Blocks `Firecrawl`, `Apify`, `Browserless`, `Stagehand`, `GPTBot`, `ClaudeBot`, `x-firecrawl-*`, etc. by default (`blockAiCrawlers: false` to opt out), and exposes `collectHandshakeProof(challenge)` / `verifyHandshakeProof()` over a private per-page bridge token so `proxysnare/unified` binds real-browser verification directly into `POST /__proxysnare/handshake`.
+- **Hardened IP + UA + PoW + Method/Path-Bound One-Time Tickets (`VB_ATTEST_V2`) & Pluggable Store**: Supports optional multi-worker async `store` adapter (`get`/`set`/`take`/`delete`), content-hashed `?v=<hash12>` immutable `gate.js` with `sha384` SRI, and full parity with `python/veilbreak.py` (accepting FastAPI/Starlette `Headers`, Flask/Werkzeug, Django, and `HTTPMessage` mappings).
+- **Modular Subpath Exports & Bundled `.d.ts`**: Import `veilbreak/presets`, `veilbreak/probes`, `veilbreak/middleware`, `veilbreak/browser-sdk`, or `veilbreak/nl` with TypeScript declarations.
 
 ---
 
@@ -115,7 +115,7 @@ node bin/veilbreak.js ask "protect http://localhost:3000 on port 8080 in balance
 </veil-break>
 ```
 
-*`<veil-break>` dispatches `veilbreak-verified` and `veilbreak-blocked` CustomEvents on the host element. Light DOM children still exist in initial HTML until hydrated; keep confidential data behind protected `/api/*` endpoints.*
+*`<veil-break>` dispatches `veilbreak-allowed` and `veilbreak-denied` CustomEvents on the host element. Light DOM children still exist in initial HTML until hydrated; keep confidential data behind protected `/api/*` endpoints.*
 
 ### 4. Node.js / Express Middleware & Python Verifier
 
@@ -176,21 +176,22 @@ if verdict.blocked:
 
 ## Modes & Honest Boundaries
 
-| Mode | Threshold | PoW Bits | Behavior | Best For |
-| :--- | :-: | :-: | :--- | :--- |
-| `strict` *(default)* | `>= 2` | `12` | Blocks on any triggered physics/coherence invariant, CLI/automation UA, missing Fetch Metadata, or invalid/replayed PoW ticket | Protected APIs, anti-scraping, high-value web apps |
-| `balanced` | `>= 4` | `10` | Enforces IP/UA/PoW one-time tickets and automation UA denial, while requiring `>= 4` on browser physics invariants (allows single `+2` Canvas-only farbling) | Public consumer sites needing headroom for single-signal farbling |
-| `monitor` *(alias: `observe`)* | `∞` | `0` | Never blocks; emits `X-VeilBreak-Score` and `onDetect` telemetry | Staging, shadow auditing, rollout verification |
-| `off` | `∞` | `0` | Completely disabled | Local development & automated integration tests |
+| Preset | Threshold | PoW Bits | IP Bind | CDP Weight | Auto-Block DOM | Recommended Use |
+| :--- | :-: | :-: | :-: | :-: | :-: | :--- |
+| **`off`** | `∞` | `0` | Off | `0` | Off | Local development & automated integration tests |
+| **`monitor`** *(alias: `observe`)* | `∞` | `0` | Off | `+1` | Off | Staging, shadow auditing & rollout verification |
+| **`balanced`** | `>= 4` | `10` | **Off** *(mobile safe)* | `+1` *(DevTools + single farbling = `3 < 4`)* | **Off** | **Best default for public consumer sites** — blocks Firecrawl, Docker headless (`+3 + 1 = 4`), stealth forks & bots with zero FP on mobile/Brave/DevTools |
+| **`strict`** *(default)* | `>= 2` | `12` | On *(auto-retries IP roam)* | `+4` *(`+1` with `allowDevTools: true`)* | On *(only at score `>= 4`)* | Protected APIs, anti-scraping & high-value web apps |
+| **`paranoid`** | `>= 2` | `14` | On | `+6` *(hard-fail unless `allowDevTools: true`)* | On *(only at score `>= 4`)* | Maximum anti-CDP / anti-automation hardening |
 
 *HTTP operational status codes: `403` (blocked / invalid or replayed ticket / failed PoW), `429` (per-IP `/ticket` rate limit exceeded), `503` (ticket store capacity reached — fails closed).*
 
 ### Important Security & Operational Caveats
-- **Client-Side Telemetry Scope (`VB_ATTEST_V2`):** `VB_ATTEST_V2` enforces one-time IP/UA/PoW/method/path-bound tickets and Fetch Metadata checks, defeating out-of-the-box `curl`, headless browsers, and Caido/Burp Repeater replay/path-tampering workflows. However, because probe execution runs inside browser JS, a dedicated adversary who reverse-engineers `gate.js`, forges complete desktop browser headers + Fetch Metadata, fetches a ticket from the same IP/UA, and solves `VB_POW_V2` in a custom script can still submit synthetic `s=0, f=0` telemetry. Always pair VeilBreak with authentication, rate limiting, and server-side business rules.
-- **Open DevTools (`CDP_RUNTIME_ENABLE`):** Opening browser DevTools trips `CDP_RUNTIME_ENABLE` (`+4`). Pass `antiCdp: false` (or CLI `--no-anti-cdp` / `data-anti-cdp="false"`) in staging/developer environments.
-- **Multi-Signal Privacy Browsers:** `balanced` (`>= 4`) allows single-signal Canvas-only farbling (`+2`), but aggressive privacy browsers that simultaneously randomize Canvas + WebGL + Audio (e.g., Brave Shields Strict, LibreWolf / Firefox `privacy.resistFingerprinting`, Tor Browser) can still reach `score >= 4`. Audit with `monitor` mode first on privacy-heavy audiences.
+- **Client-Side Telemetry Scope (`VB_ATTEST_V2` / `VB_HS_V3`):** Defeats out-of-the-box `curl`, Firecrawl/AI scrapers, headless/stealth browsers, and Caido/Burp Repeater replay/path-tampering workflows. However, because probe execution runs inside client JavaScript, a dedicated adversary who reverse-engineers `gate.js`, forges complete desktop browser headers + Fetch Metadata, solves `VB_POW_V2`, and submits synthetic `s=0, f=0` JSON operates at the irreducible client-side boundary. Pair with **ProxySnare (`createUnifiedShield`)**, authentication, rate limiting, and server-side business rules.
+- **Open DevTools (`CDP_RUNTIME_ENABLE`):** In `balanced` mode, open DevTools scores only `+1` (never solo-blocks, even alongside a single `+2` privacy quirk). In `strict`/`paranoid`, pass `allowDevTools: true` (or `antiCdp: false`) when developers keep DevTools open.
+- **Aggressive Multi-Signal Privacy Browsers:** Clean native Brave Standard Shields and Firefox custom-font accessibility are exempted, and `balanced` tolerates single-signal Firefox Private Browsing Canvas randomization + open DevTools. Multi-signal privacy profiles that simultaneously randomize Canvas + WebGL + Audio (e.g., Tor Browser) can still reach `score >= 4`; audit with `monitor` mode first on Tor-heavy audiences.
 - **Plain HTML `<form>` Posts & Sync XHR:** `gate.js` automatically instruments `window.fetch()` and async `XMLHttpRequest` (including Axios/jQuery/HTMX). Plain HTML `<form>` submissions or deprecated synchronous XHR cannot attach async tickets and should use `fetch()`/async XHR or stay outside `protectedPaths`.
-- **Multi-Worker Scaling:** Default ticket storage is process-local (`Map`); enable sticky sessions behind load balancers when running multiple worker processes.
+- **Multi-Worker Scaling:** Pass an optional async `store` adapter (`{ get, set, take, delete }`, e.g., Redis) to `createVeilBreakMiddleware({ store })` or enable sticky sessions behind load balancers.
 
 ---
 
@@ -209,7 +210,7 @@ python3 benchmarks/run_live_benchmark.py
 
 ## Documentation & Ecosystem
 
-- **[14 Invariants, Kinematics & Threat Model](docs/invariants-and-threat-model.md)** — Complete specification of every invariant, server-side scoring weight, `VB_ATTEST_V2` PoW/binding wire format, and honest boundaries.
+- **[15 Invariants, Kinematics & Threat Model](docs/invariants-and-threat-model.md)** — Complete specification of every invariant, server-side scoring weight, `VB_ATTEST_V2` PoW/binding wire format, and honest boundaries.
 - **[Natural-Language Beginner's Guide](docs/getting-started-beginners.md)** — Copy-paste `ask`/`explain` recipes and live playground walkthrough.
 - **[Live Benchmark Raw Results](benchmarks/results.json)** — Machine-readable JSON output from the 19-browser test run.
 

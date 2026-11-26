@@ -1,13 +1,17 @@
 {
   "name": "veilbreak",
-  "version": "2.1.0",
-  "description": "Zero-dependency anti-stealth & multi-engine browser integrity gate — 14 cross-engine invariants, interaction kinematics, IP/UA/PoW-bound tickets, <veil-break> Web Component, middleware, and Python verifier",
+  "version": "2.2.0",
+  "description": "Zero-dependency anti-stealth, Firecrawl/AI-crawler & multi-engine browser integrity gate — 15 cross-engine invariants, active CDP fingerprinting, interaction kinematics, SRI, adjustable security presets, middleware, and Python verifier",
   "main": "src/index.js",
   "types": "src/index.d.ts",
   "exports": {
     ".": {
       "types": "./src/index.d.ts",
       "default": "./src/index.js"
+    },
+    "./presets": {
+      "types": "./src/presets.d.ts",
+      "default": "./src/presets.js"
     },
     "./probes": {
       "types": "./src/probes.d.ts",

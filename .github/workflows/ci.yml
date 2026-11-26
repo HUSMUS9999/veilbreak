@@ -43,21 +43,24 @@ jobs:
           cat <<'EOF' > .ci_typecheck.mts
           import * as root from "./src/index.js";
           import type { VeilBreakNaturalLanguagePlan } from "./src/nl.js";
-          import { FLAG, evaluateTelemetry, verifyAttestation, sha256Hex } from "./src/probes.js";
+          import { FLAG, evaluateTelemetry, verifyAttestation, verifyHandshakeProof, sha256Hex } from "./src/probes.js";
           import { createVeilBreakMiddleware, createVeilBreakServer } from "./src/middleware.js";
           import { buildBrowserGateScript, buildPlaygroundHtml } from "./src/browser-sdk.js";
+          import { resolvePreset } from "./src/presets.js";
           const plan: VeilBreakNaturalLanguagePlan = root.compileNaturalLanguage("block stealth browsers on http://localhost:3000 behind nginx");
+          const preset = resolvePreset("balanced");
           const bit: number = FLAG.WEBDRIVER_FLAG;
           const hash: string = sha256Hex(new Uint8Array([1, 2, 3]));
           const ev = evaluateTelemetry({ webdriver: false, platform: "Linux x86_64" }, { mode: "observe" });
           const v = verifyAttestation({ mode: "strict", headers: {}, attest: null });
+          const hs = verifyHandshakeProof({ mode: "strict", headers: {}, proof: null as unknown });
           const mw = createVeilBreakMiddleware({ mode: "strict", trustProxy: ["10.0.0.0/8", "::1/128"], antiCdp: false });
           const srv = createVeilBreakServer({ target: "http://127.0.0.1:3000" });
           const js: string = buildBrowserGateScript({ defaultMode: "observe", antiCdp: false });
           const pg: string = buildPlaygroundHtml({ mode: "strict", antiCdp: false });
-          void plan; void bit; void hash; void ev; void v; void mw; void srv; void js; void pg;
+          void plan; void preset; void bit; void hash; void ev; void v; void hs; void mw; void srv; void js; void pg;
           EOF
-          npx tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 .ci_typecheck.mts
+          npx tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --types node .ci_typecheck.mts
 
       - name: Verify npm tarball hygiene (no __pycache__ / .pyc leaks)
         run: |
